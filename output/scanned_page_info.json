@@ -1,0 +1,62 @@
+{
+  "title" : "Pulse - 3i Infotech Intranet Portal",
+  "url" : "https://pulse.3i-infotech.com/HRIntranet/Login",
+  "htmlLength" : 7104,
+  "forms" : [ {
+    "id" : "",
+    "action" : "",
+    "method" : ""
+  } ],
+  "inputs" : [ {
+    "id" : "hfAntiForgeryToken",
+    "name" : "AntiForgeryToken",
+    "type" : "hidden",
+    "placeholder" : "",
+    "label" : null,
+    "required" : false
+  }, {
+    "id" : "userid",
+    "name" : "text",
+    "type" : "text",
+    "placeholder" : "",
+    "label" : null,
+    "required" : true
+  }, {
+    "id" : "passwd",
+    "name" : "text",
+    "type" : "password",
+    "placeholder" : "",
+    "label" : null,
+    "required" : true
+  }, {
+    "id" : "chkrem",
+    "name" : "",
+    "type" : "checkbox",
+    "placeholder" : "",
+    "label" : null,
+    "required" : false
+  }, {
+    "id" : "signbutton",
+    "name" : "",
+    "type" : "button",
+    "placeholder" : "",
+    "label" : null,
+    "required" : false
+  } ],
+  "buttons" : [ {
+    "id" : "signbutton",
+    "text" : "Sign In",
+    "type" : "button"
+  } ],
+  "links" : [ {
+    "text" : "Remember Me",
+    "href" : "#"
+  }, {
+    "text" : "Forgot Password?",
+    "href" : "https://ireset.3i-infotech.com:7001/ResetPassword.html"
+  }, {
+    "text" : "Reset",
+    "href" : "#"
+  } ],
+  "tables" : [ ]
+}

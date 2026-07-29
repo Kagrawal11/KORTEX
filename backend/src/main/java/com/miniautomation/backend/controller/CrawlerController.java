@@ -9,7 +9,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class CrawlerController {
 
-    private final CrawlerService crawlerService = new CrawlerService();
+    private final CrawlerService crawlerService;
+
+    public CrawlerController(CrawlerService crawlerService) {
+        this.crawlerService = crawlerService;
+    }
 
     @GetMapping("/api/crawler/scan")
     public PageInfo scan(@RequestParam String url) {

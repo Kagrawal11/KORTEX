@@ -13,6 +13,7 @@ public class PageInfo {
     private List<InputField> inputs = new ArrayList<>();
     private List<ButtonInfo> buttons = new ArrayList<>();
     private List<LinkInfo> links = new ArrayList<>();
+    private List<TableInfo> tables = new ArrayList<>();
 
     public PageInfo() {
     }
@@ -71,5 +72,13 @@ public class PageInfo {
 
     public void setLinks(List<LinkInfo> links) {
         this.links = links;
+    }
+
+    public List<TableInfo> getTables() {
+        return tables;
+    }
+
+    public void setTables(List<TableInfo> tables) {
+        this.tables = tables;
     }
 }

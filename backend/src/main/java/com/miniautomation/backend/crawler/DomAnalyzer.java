@@ -1,15 +1,18 @@
 package com.miniautomation.backend.crawler;
 
 import com.miniautomation.backend.model.ButtonInfo;
+import com.miniautomation.backend.model.FormInfo;
 import com.miniautomation.backend.model.InputField;
-import com.miniautomation.backend.model.PageInfo;
 import com.miniautomation.backend.model.LinkInfo;
+import com.miniautomation.backend.model.PageInfo;
+import com.miniautomation.backend.model.TableInfo;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
-import com.miniautomation.backend.model.FormInfo;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
+import org.springframework.stereotype.Component;
 
+@Component
 public class DomAnalyzer {
 
     public PageInfo analyze(String html) {
@@ -28,6 +31,8 @@ public class DomAnalyzer {
         extractButtons(document, pageInfo);
 
         extractLinks(document, pageInfo);
+
+        extractTables(document, pageInfo);
 
         return pageInfo;
     }
@@ -113,6 +118,29 @@ public class DomAnalyzer {
             linkInfo.setHref(link.attr("href"));
 
             pageInfo.getLinks().add(linkInfo);
+        }
+    }
+
+    private void extractTables(Document document, PageInfo pageInfo) {
+
+        Elements tables = document.select("table");
+
+        for (Element table : tables) {
+
+            TableInfo tableInfo = new TableInfo();
+
+            tableInfo.setId(table.id());
+
+            Elements headers = table.select("th");
+            for (Element header : headers) {
+                tableInfo.getHeaders().add(header.text().trim());
+            }
+
+            Elements rows = table.select("tr");
+            tableInfo.setRowCount(rows.size());
+            tableInfo.setColumnCount(headers.size());
+
+            pageInfo.getTables().add(tableInfo);
         }
     }
 
