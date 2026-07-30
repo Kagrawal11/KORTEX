@@ -4,6 +4,7 @@ import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.options.LoadState;
 import com.miniautomation.backend.model.ButtonInfo;
+import com.miniautomation.backend.model.InputField;
 import com.miniautomation.backend.model.LoginResult;
 import com.miniautomation.backend.model.PageInfo;
 import org.springframework.stereotype.Component;
@@ -19,73 +20,91 @@ public class FormFiller {
         long startTime = System.currentTimeMillis();
         String initialUrl = page.url();
 
-        // 1. Fill input fields using pressSequentially for realistic typing
+        // 1. Fill input fields using pressSequentially for realistic typing with fallback resolution
         for (Map.Entry<String, String> entry : fieldValues.entrySet()) {
             String id = entry.getKey();
             String value = entry.getValue();
 
             System.out.println("[STEP] Filling field '" + id + "'...");
 
-            Locator locator = page.locator("#" + id);
-            locator.scrollIntoViewIfNeeded();
-            locator.click();
-            locator.pressSequentially(value, new Locator.PressSequentiallyOptions().setDelay(80));
+            Locator locator = resolveInputLocator(page, pageInfo, id);
+
+            try {
+                locator.scrollIntoViewIfNeeded(new Locator.ScrollIntoViewIfNeededOptions().setTimeout(3000));
+            } catch (Exception e) {
+                // Gracefully continue if scroll into view times out or is unneeded
+            }
+
+            try {
+                locator.click(new Locator.ClickOptions().setTimeout(3000));
+            } catch (Exception e) {
+                // Gracefully continue if click fails
+            }
+
+            try {
+                locator.pressSequentially(value, new Locator.PressSequentiallyOptions().setDelay(80).setTimeout(5000));
+            } catch (Exception e) {
+                // Fallback to direct fill if pressSequentially times out
+                locator.fill(value);
+            }
         }
 
         // 2. Locate and click submit control
         System.out.println("[STEP] Submitting form...");
         boolean submitClicked = false;
 
-        // Priority a: Check PageInfo.getButtons() for button with type="submit"
-        for (ButtonInfo button : pageInfo.getButtons()) {
-            if ("submit".equalsIgnoreCase(button.getType())) {
-                if (button.getId() != null && !button.getId().trim().isEmpty()) {
-                    page.locator("#" + button.getId()).click();
-                    submitClicked = true;
-                    break;
-                } else if (button.getText() != null && !button.getText().trim().isEmpty()) {
-                    page.getByText(button.getText(), new Page.GetByTextOptions().setExact(false)).click();
-                    submitClicked = true;
-                    break;
-                }
-            }
-        }
-
-        // Priority b: Look for button whose text contains common submit keywords
-        if (!submitClicked) {
-            String[] keywords = {"sign in", "log in", "login", "submit"};
+        // Priority a: Check PageInfo.getButtons() for visible button with type="submit"
+        if (pageInfo != null && pageInfo.getButtons() != null) {
             for (ButtonInfo button : pageInfo.getButtons()) {
-                String btnText = button.getText() != null ? button.getText().toLowerCase(Locale.ROOT) : "";
-                for (String keyword : keywords) {
-                    if (btnText.contains(keyword)) {
-                        if (button.getId() != null && !button.getId().trim().isEmpty()) {
-                            page.locator("#" + button.getId()).click();
-                            submitClicked = true;
-                            break;
-                        } else if (button.getText() != null && !button.getText().trim().isEmpty()) {
-                            page.getByText(button.getText(), new Page.GetByTextOptions().setExact(false)).click();
-                            submitClicked = true;
-                            break;
-                        }
+                if ("submit".equalsIgnoreCase(button.getType())) {
+                    if (button.getId() != null && !button.getId().trim().isEmpty()) {
+                        Locator btnLoc = page.locator("[id='" + button.getId() + "']");
+                        try {
+                            if (btnLoc.count() > 0 && btnLoc.first().isVisible(new Locator.IsVisibleOptions().setTimeout(1000))) {
+                                btnLoc.first().click();
+                                submitClicked = true;
+                                break;
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                    if (!submitClicked && button.getText() != null && !button.getText().trim().isEmpty()) {
+                        Locator btnLoc = page.getByText(button.getText(), new Page.GetByTextOptions().setExact(false));
+                        try {
+                            if (btnLoc.count() > 0 && btnLoc.first().isVisible(new Locator.IsVisibleOptions().setTimeout(1000))) {
+                                btnLoc.first().click();
+                                submitClicked = true;
+                                break;
+                            }
+                        } catch (Exception ignored) {}
                     }
                 }
-                if (submitClicked) break;
             }
         }
 
-        // Fallback: Use Playwright DOM selector fallback if button was not matched from PageInfo
+        // Priority b: Look for visible button whose text contains common submit keywords
         if (!submitClicked) {
-            Locator defaultSubmit = page.locator("button[type='submit'], input[type='submit']").first();
-            if (defaultSubmit.count() > 0) {
-                defaultSubmit.click();
-                submitClicked = true;
-            } else {
-                Locator textSubmit = page.locator("button:has-text('Sign In'), button:has-text('Log In'), button:has-text('Login'), button:has-text('Submit'), input[value*='Sign In'], input[value*='Log In'], input[value*='Submit']").first();
-                if (textSubmit.count() > 0) {
-                    textSubmit.click();
+            String[] keywords = {"sign in", "log in", "login", "submit"};
+            for (String keyword : keywords) {
+                Locator visibleSubmit = page.locator("button:has-text('" + keyword + "'):visible, input[value*='" + keyword + "']:visible, button[type='submit']:visible, input[type='submit']:visible").first();
+                try {
+                    if (visibleSubmit.count() > 0 && visibleSubmit.isVisible(new Locator.IsVisibleOptions().setTimeout(1000))) {
+                        visibleSubmit.click();
+                        submitClicked = true;
+                        break;
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+
+        // Fallback: Default submit button click
+        if (!submitClicked) {
+            Locator defaultSubmit = page.locator("button[type='submit']:visible, input[type='submit']:visible").first();
+            try {
+                if (defaultSubmit.count() > 0) {
+                    defaultSubmit.click();
                     submitClicked = true;
                 }
-            }
+            } catch (Exception ignored) {}
         }
 
         // 3. Wait after click
@@ -97,7 +116,7 @@ public class FormFiller {
         }
 
         try {
-            Thread.sleep(1000);
+            Thread.sleep(1500);
         } catch (InterruptedException ignored) {
         }
 
@@ -130,5 +149,60 @@ public class FormFiller {
         result.setSubmitToResultDurationMs(durationMs);
 
         return result;
+    }
+
+    private Locator resolveInputLocator(Page page, PageInfo pageInfo, String id) {
+
+        InputField matchingField = null;
+        if (pageInfo != null && pageInfo.getInputs() != null) {
+            for (InputField f : pageInfo.getInputs()) {
+                if (id.equals(f.getId())) {
+                    matchingField = f;
+                    break;
+                }
+            }
+        }
+
+        String type = matchingField != null && matchingField.getType() != null ? matchingField.getType().toLowerCase(Locale.ROOT) : "";
+        String name = matchingField != null ? matchingField.getName() : null;
+
+        // Strategy 1: Try [id='...'] if element exists and is visible
+        if (id != null && !id.trim().isEmpty()) {
+            Locator byId = page.locator("[id='" + id + "']");
+            try {
+                if (byId.count() > 0 && byId.first().isVisible(new Locator.IsVisibleOptions().setTimeout(1000))) {
+                    return byId.first();
+                }
+            } catch (Exception ignored) {}
+        }
+
+        // Strategy 2: Try by name attribute if name exists and is visible
+        if (name != null && !name.trim().isEmpty()) {
+            Locator byName = page.locator("input[name='" + name + "']");
+            try {
+                if (byName.count() > 0 && byName.first().isVisible(new Locator.IsVisibleOptions().setTimeout(1000))) {
+                    return byName.first();
+                }
+            } catch (Exception ignored) {}
+        }
+
+        // Strategy 3: Target visible password field
+        if ("password".equals(type)) {
+            Locator byPassword = page.locator("input[type='password']:visible");
+            if (byPassword.count() > 0) {
+                return byPassword.first();
+            }
+        }
+
+        // Strategy 4: Target visible email / text field
+        if ("email".equals(type) || "text".equals(type) || type.isEmpty()) {
+            Locator byVisibleInput = page.locator("input[type='email']:visible, input[type='text']:visible, input[name*='user']:visible, input[name*='email']:visible, input[autocomplete*='username']:visible");
+            if (byVisibleInput.count() > 0) {
+                return byVisibleInput.first();
+            }
+        }
+
+        // Fallback default
+        return page.locator("[id='" + id + "']").first();
     }
 }
