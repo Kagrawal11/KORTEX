@@ -6,6 +6,16 @@ import com.miniautomation.backend.ai.LlmClient;
 import com.miniautomation.backend.entity.TestStepEntity;
 import org.springframework.stereotype.Component;
 
+/**
+ * AiElementResolver — Self-healing locator resolution via LLM + heuristic fallbacks.
+ *
+ * Resolution order (when primary CSS selector fails):
+ *   1. LLM API call with truncated page DOM → returns a new CSS selector
+ *   2. id attribute direct match
+ *   3. name attribute match
+ *   4. Visible label text partial-match
+ *   5. Last resort: return the original (broken) locator and let the caller fail gracefully
+ */
 @Component
 public class AiElementResolver {
 
@@ -16,44 +26,68 @@ public class AiElementResolver {
     }
 
     public Locator resolveSelfHealedLocator(Page page, TestStepEntity step) {
-        System.out.println("[AiElementResolver] Primary locator '" + step.getPrimarySelector() + "' failed! Triggering AI Self-Healing...");
+        System.out.println("[AiElementResolver] Self-healing for primary selector: " + step.getPrimarySelector());
 
-        String pageDomSnippet = "";
+        // ── 1. LLM resolution ─────────────────────────────────────────────────
         try {
-            String fullContent = page.content();
-            pageDomSnippet = fullContent.length() > 4000 ? fullContent.substring(0, 4000) : fullContent;
-        } catch (Exception e) {
-            pageDomSnippet = "Failed to capture page snippet: " + e.getMessage();
-        }
+            String pageDom = page.content();
+            String snippet = pageDom.length() > 4000 ? pageDom.substring(0, 4000) : pageDom;
 
-        String healedSelector = llmClient.resolveSelfHealedLocator(
-                step.getPrimarySelector(),
-                step.getAiDescription(),
-                pageDomSnippet
-        );
+            String healedSelector = llmClient.resolveSelfHealedLocator(
+                    step.getPrimarySelector(),
+                    step.getAiDescription(),
+                    snippet
+            );
 
-        System.out.println("[AiElementResolver] AI resolved self-healed selector: " + healedSelector);
-
-        try {
-            Locator healedLoc = page.locator(healedSelector);
-            if (healedLoc.count() > 0) {
-                return healedLoc.first();
+            if (healedSelector != null && !healedSelector.trim().isEmpty()
+                    && !healedSelector.equals(step.getPrimarySelector())) {
+                System.out.println("[AiElementResolver] LLM suggests: " + healedSelector);
+                Locator loc = page.locator(healedSelector);
+                if (loc.count() > 0) {
+                    System.out.println("[AiElementResolver] LLM healed locator resolved OK.");
+                    return loc.first();
+                }
             }
         } catch (Exception e) {
-            System.out.println("[AiElementResolver Warning] Healed locator creation failed: " + e.getMessage());
+            System.out.println("[AiElementResolver] LLM call failed: " + e.getMessage());
         }
 
-        // Additional fallback: try matching text or ID/name attribute heuristics
-        if (step.getElementId() != null && !step.getElementId().isEmpty()) {
-            Locator idLoc = page.locator("[id='" + step.getElementId() + "']");
-            if (idLoc.count() > 0) return idLoc.first();
+        // ── 2. id attribute fallback ──────────────────────────────────────────
+        if (step.getElementId() != null && !step.getElementId().trim().isEmpty()) {
+            try {
+                Locator loc = page.locator("[id='" + step.getElementId() + "']");
+                if (loc.count() > 0) {
+                    System.out.println("[AiElementResolver] Healed via id: " + step.getElementId());
+                    return loc.first();
+                }
+            } catch (Exception ignored) {}
         }
 
-        if (step.getLabelText() != null && !step.getLabelText().isEmpty()) {
-            Locator textLoc = page.getByText(step.getLabelText(), new Page.GetByTextOptions().setExact(false));
-            if (textLoc.count() > 0) return textLoc.first();
+        // ── 3. name attribute fallback ────────────────────────────────────────
+        if (step.getName() != null && !step.getName().trim().isEmpty()) {
+            try {
+                Locator loc = page.locator("[name='" + step.getName() + "']");
+                if (loc.count() > 0) {
+                    System.out.println("[AiElementResolver] Healed via name: " + step.getName());
+                    return loc.first();
+                }
+            } catch (Exception ignored) {}
         }
 
-        return page.locator(step.getPrimarySelector()).first();
+        // ── 4. label text fallback ────────────────────────────────────────────
+        if (step.getLabelText() != null && !step.getLabelText().trim().isEmpty()) {
+            try {
+                Locator loc = page.getByText(step.getLabelText(),
+                        new Page.GetByTextOptions().setExact(false));
+                if (loc.count() > 0) {
+                    System.out.println("[AiElementResolver] Healed via label text: " + step.getLabelText());
+                    return loc.first();
+                }
+            } catch (Exception ignored) {}
+        }
+
+        // ── 5. Last resort — return original broken locator (will throw on action) ──
+        System.out.println("[AiElementResolver] All healing strategies exhausted. Returning original selector.");
+        return page.locator(step.getPrimarySelector() != null ? step.getPrimarySelector() : "body").first();
     }
 }
