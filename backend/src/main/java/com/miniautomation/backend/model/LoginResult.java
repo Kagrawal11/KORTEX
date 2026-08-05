@@ -6,9 +6,12 @@ public class LoginResult {
     private String finalUrl;
     private boolean urlChanged;
     private boolean successTextFound;
+    private boolean visibleTextFound;
+    private boolean targetElementFound;
     private boolean overallSuccess;
     private String actualPageTitleAfterSubmit;
     private long submitToResultDurationMs;
+    private String verificationSummary;
 
     public LoginResult() {
     }
@@ -45,6 +48,22 @@ public class LoginResult {
         this.successTextFound = successTextFound;
     }
 
+    public boolean isVisibleTextFound() {
+        return visibleTextFound;
+    }
+
+    public void setVisibleTextFound(boolean visibleTextFound) {
+        this.visibleTextFound = visibleTextFound;
+    }
+
+    public boolean isTargetElementFound() {
+        return targetElementFound;
+    }
+
+    public void setTargetElementFound(boolean targetElementFound) {
+        this.targetElementFound = targetElementFound;
+    }
+
     public boolean isOverallSuccess() {
         return overallSuccess;
     }
@@ -68,4 +87,13 @@ public class LoginResult {
     public void setSubmitToResultDurationMs(long submitToResultDurationMs) {
         this.submitToResultDurationMs = submitToResultDurationMs;
     }
+
+    public String getVerificationSummary() {
+        return verificationSummary;
+    }
+
+    public void setVerificationSummary(String verificationSummary) {
+        this.verificationSummary = verificationSummary;
+    }
 }
+

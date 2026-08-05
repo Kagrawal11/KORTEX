@@ -1,6 +1,7 @@
 package com.miniautomation.backend.crawler;
 
 import com.microsoft.playwright.Page;
+import com.microsoft.playwright.options.LoadState;
 import com.miniautomation.backend.browser.BrowserManager;
 import com.miniautomation.backend.model.LoginResult;
 import com.miniautomation.backend.model.PageInfo;
@@ -22,29 +23,40 @@ public class CrawlerService {
     }
 
     public PageInfo scan(String url) {
-        try {
-            Page page = browserManager.launchBrowser(url);
-            System.out.println("[STEP] Scanning page structure...");
-            String html = page.content();
-            PageInfo pageInfo = domAnalyzer.analyze(html);
-            pageInfo.setUrl(url);
-            return pageInfo;
-        } finally {
-            browserManager.closeBrowser();
-        }
+        Page page = browserManager.getOrLaunchPage(url);
+        System.out.println("[STEP] Waiting for DOM stability (SPA load lock)...");
+        waitForDomStability(page);
+
+        System.out.println("[STEP] Scanning page structure...");
+        String html = page.content();
+        PageInfo pageInfo = domAnalyzer.analyze(html);
+        pageInfo.setUrl(url);
+        return pageInfo;
     }
 
     public LoginResult scanFillAndVerify(String url, Map<String, String> fieldValues, String expectedSuccessIndicator) {
-        Page page = browserManager.launchBrowser(url);
-        try {
-            System.out.println("[STEP] Scanning page structure...");
-            String html = page.content();
-            PageInfo pageInfo = domAnalyzer.analyze(html);
-            pageInfo.setUrl(url);
+        Page page = browserManager.getOrLaunchPage(url);
+        System.out.println("[STEP] Waiting for DOM stability before fill & submit...");
+        waitForDomStability(page);
 
-            return formFiller.fillAndSubmit(page, pageInfo, fieldValues, expectedSuccessIndicator);
-        } finally {
-            browserManager.closeBrowser();
-        }
+        System.out.println("[STEP] Scanning page structure...");
+        String html = page.content();
+        PageInfo pageInfo = domAnalyzer.analyze(html);
+        pageInfo.setUrl(url);
+
+        return formFiller.fillAndSubmit(page, pageInfo, fieldValues, expectedSuccessIndicator);
     }
-}
+
+    private void waitForDomStability(Page page) {
+        try {
+            page.waitForLoadState(LoadState.NETWORKIDLE, new Page.WaitForLoadStateOptions().setTimeout(8000));
+        } catch (Exception e) {
+            System.out.println("[Info] Network idle wait timed out or skipped, continuing with DOM settling check...");
+        }
+
+        try {
+            page.waitForLoadState(LoadState.DOMCONTENTLOADED);
+            Thread.sleep(800); // Quiet window for SPA frameworks (Angular/React/Vue) rendering
+        } catch (Exception ignored) {}
+    }
+}

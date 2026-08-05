@@ -121,20 +121,47 @@ public class FormFiller {
         }
 
         // 4. Verify outcome
-        System.out.println("[STEP] Verifying outcome...");
+        System.out.println("[STEP] Verifying outcome using dual-signal SPA-aware assertion...");
         String finalUrl = page.url();
         String actualPageTitle = page.title();
         boolean urlChanged = !finalUrl.equalsIgnoreCase(initialUrl);
 
-        boolean successTextFound = false;
+        boolean visibleTextFound = false;
+        boolean targetElementFound = false;
         boolean overallSuccess;
+        StringBuilder summaryBuilder = new StringBuilder();
 
         if (expectedSuccessIndicator != null && !expectedSuccessIndicator.trim().isEmpty()) {
-            String pageContent = page.content().toLowerCase(Locale.ROOT);
-            successTextFound = pageContent.contains(expectedSuccessIndicator.trim().toLowerCase(Locale.ROOT));
-            overallSuccess = urlChanged && successTextFound;
+            String indicatorText = expectedSuccessIndicator.trim();
+            String indicatorLower = indicatorText.toLowerCase(Locale.ROOT);
+
+            // Signal A: Query visible inner text of rendered page body (avoiding script/meta tag false positives)
+            String visiblePageText = "";
+            try {
+                visiblePageText = page.locator("body").innerText().toLowerCase(Locale.ROOT);
+            } catch (Exception e) {
+                visiblePageText = page.content().toLowerCase(Locale.ROOT);
+            }
+            visibleTextFound = visiblePageText.contains(indicatorLower);
+
+            // Signal B: Query if element containing target text is visible on the page
+            try {
+                Locator textLocator = page.getByText(indicatorText, new Page.GetByTextOptions().setExact(false));
+                if (textLocator.count() > 0 && textLocator.first().isVisible(new Locator.IsVisibleOptions().setTimeout(1500))) {
+                    targetElementFound = true;
+                }
+            } catch (Exception ignored) {}
+
+            // Dual-Signal Outcome Logic (URL changed OR expected visible text/element found)
+            overallSuccess = urlChanged || visibleTextFound || targetElementFound;
+
+            summaryBuilder.append("Indicator: '").append(indicatorText).append("' | ")
+                    .append("URL Changed: ").append(urlChanged).append(" | ")
+                    .append("Visible Text Found: ").append(visibleTextFound).append(" | ")
+                    .append("Target Element Present: ").append(targetElementFound);
         } else {
             overallSuccess = urlChanged;
+            summaryBuilder.append("No explicit indicator given. Fallback URL Changed check: ").append(urlChanged);
         }
 
         long durationMs = System.currentTimeMillis() - startTime;
@@ -143,10 +170,13 @@ public class FormFiller {
         result.setInitialUrl(initialUrl);
         result.setFinalUrl(finalUrl);
         result.setUrlChanged(urlChanged);
-        result.setSuccessTextFound(successTextFound);
+        result.setSuccessTextFound(visibleTextFound || targetElementFound);
+        result.setVisibleTextFound(visibleTextFound);
+        result.setTargetElementFound(targetElementFound);
         result.setOverallSuccess(overallSuccess);
         result.setActualPageTitleAfterSubmit(actualPageTitle);
         result.setSubmitToResultDurationMs(durationMs);
+        result.setVerificationSummary(summaryBuilder.toString());
 
         return result;
     }
