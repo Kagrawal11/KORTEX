@@ -77,113 +77,123 @@ public class PlaybackEngine {
             System.out.println(String.format("\n[Playback Step %d/%d] action=%-8s selector=%s",
                     step.getStepOrder(), steps.size(), step.getActionType(), step.getPrimarySelector()));
 
-            try {
-                Locator locator = resolveLocator(page, step, result);
-                executeAction(page, locator, step);
-
-                // Only mark PASSED here if the result wasn't already upgraded to HEALED_BY_AI
-                if (result.getStatus() == null) {
-                    result.setStatus(StepExecutionResult.StepStatus.PASSED);
-                }
-
-                System.out.println("[Playback Step " + step.getStepOrder() + "] → " + result.getStatus());
-
-            } catch (Exception e) {
-                System.out.println("[Playback Step " + step.getStepOrder() + "] ✘ FAILED: " + e.getMessage());
-                result.setStatus(StepExecutionResult.StepStatus.FAILED);
-                result.setErrorMessage(e.getMessage());
-                allPassed = false;
-            }
-
-            result.setExecutionDurationMs(System.currentTimeMillis() - stepStart);
-            report.addStepResult(result);
-
-            // Brief stability wait between steps (helps with SPA re-renders)
-            waitForStability(page);
-        }
-
-        report.setOverallSuccess(allPassed);
-        report.setTotalDurationMs(System.currentTimeMillis() - startTime);
-
-        System.out.println("[PlaybackEngine] ══════════════════════════════════════════════\n");
-        return report;
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    // Locator resolution
-    // ──────────────────────────────────────────────────────────────────────────
-
-    private Locator resolveLocator(Page page, TestStepEntity step, StepExecutionResult result) {
-        String selector = step.getPrimarySelector();
-
-        // Try primary selector
-        if (selector != null && !selector.trim().isEmpty()) {
-            try {
-                Locator loc = page.locator(selector).first();
-                if (loc.count() > 0 && loc.isVisible(new Locator.IsVisibleOptions().setTimeout(2000))) {
-                    System.out.println("[Playback] Primary selector resolved OK: " + selector);
-                    // Status is set to PASSED after action succeeds in main loop — not here
-                    return loc;
-                }
-            } catch (Exception e) {
-                System.out.println("[Playback] Primary selector failed: " + e.getMessage());
-            }
-        }
-
-        // Primary failed — try AI self-healing
-        System.out.println("[Playback] Primary locator failed → triggering AI self-healing...");
-        result.setStatus(StepExecutionResult.StepStatus.HEALED_BY_AI);
-        Locator healed = aiElementResolver.resolveSelfHealedLocator(page, step);
-        result.setSelectorUsed("HEALED: " + (healed != null ? step.getPrimarySelector() : "N/A"));
-        return healed;
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    // Action execution
-    // ──────────────────────────────────────────────────────────────────────────
-
-    private void executeAction(Page page, Locator locator, TestStepEntity step) throws Exception {
-        if (locator == null) throw new IllegalStateException("Could not resolve any locator for step " + step.getStepOrder());
-
-        String action = step.getActionType() != null ? step.getActionType().toLowerCase() : "click";
-        String value  = step.getInputValue();
-
-        // Scroll element into view before acting
         try {
-            locator.scrollIntoViewIfNeeded(new Locator.ScrollIntoViewIfNeededOptions().setTimeout(3000));
-        } catch (Exception ignored) {}
+            boolean[] usedHealing = new boolean[]{false};
+            Locator locator = resolveLocator(page, step, result, usedHealing);
+            executeAction(page, locator, step);
 
-        switch (action) {
-            case "click":
-                locator.click(new Locator.ClickOptions().setTimeout(5000));
-                break;
+            if (usedHealing[0]) {
+                result.setStatus(StepExecutionResult.StepStatus.HEALED_BY_AI);
+            } else {
+                result.setStatus(StepExecutionResult.StepStatus.PASSED);
+            }
 
-            case "input":
-            case "change":
-            case "type":
-                if (value != null && !value.trim().isEmpty()) {
-                    // Click to focus, then clear + type
-                    try { locator.click(new Locator.ClickOptions().setTimeout(2000)); } catch (Exception ignored) {}
-                    try {
-                        locator.fill("");  // clear existing content
-                        locator.pressSequentially(value,
-                                new Locator.PressSequentiallyOptions().setDelay(60).setTimeout(6000));
-                    } catch (Exception ex) {
-                        locator.fill(value);  // fallback to fill() for non-keyboard-friendly fields
-                    }
-                }
-                break;
+            System.out.println("[Playback Step " + step.getStepOrder() + "] → " + result.getStatus());
 
-            case "scroll":
-                locator.scrollIntoViewIfNeeded();
-                break;
+        } catch (Exception e) {
+            System.out.println("[Playback Step " + step.getStepOrder() + "] ✘ FAILED: " + e.getMessage());
+            result.setStatus(StepExecutionResult.StepStatus.FAILED);
+            result.setErrorMessage(e.getMessage());
+            allPassed = false;
+        }
 
-            default:
-                // Treat any unrecognised action as a click
-                locator.click(new Locator.ClickOptions().setTimeout(5000));
-                break;
+        result.setExecutionDurationMs(System.currentTimeMillis() - stepStart);
+        report.addStepResult(result);
+
+        // Brief stability wait between steps (helps with SPA re-renders)
+        waitForStability(page);
+    }
+
+    report.setOverallSuccess(allPassed);
+    report.setTotalDurationMs(System.currentTimeMillis() - startTime);
+
+    System.out.println("[PlaybackEngine] ══════════════════════════════════════════════\n");
+    return report;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Locator resolution
+// ──────────────────────────────────────────────────────────────────────────
+
+private Locator resolveLocator(Page page, TestStepEntity step, StepExecutionResult result, boolean[] usedHealing) {
+    String selector = step.getPrimarySelector();
+
+    // Try primary selector
+    if (selector != null && !selector.trim().isEmpty()) {
+        try {
+            Locator loc = page.locator(selector).first();
+            if (loc.count() > 0 && loc.isVisible(new Locator.IsVisibleOptions().setTimeout(2000))) {
+                System.out.println("[Playback] Primary selector resolved OK: " + selector);
+                usedHealing[0] = false;
+                return loc;
+            }
+        } catch (Exception e) {
+            System.out.println("[Playback] Primary selector failed: " + e.getMessage());
         }
     }
+
+    // Primary failed — try AI self-healing
+    System.out.println("[Playback] Primary locator failed → triggering AI self-healing...");
+    usedHealing[0] = true;
+    Locator healed = aiElementResolver.resolveSelfHealedLocator(page, step);
+    result.setSelectorUsed("HEALED: " + (healed != null ? step.getPrimarySelector() : "N/A"));
+    return healed;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Action execution
+// ──────────────────────────────────────────────────────────────────────────
+
+private void executeAction(Page page, Locator locator, TestStepEntity step) throws Exception {
+    if (locator == null) throw new IllegalStateException("Could not resolve any locator for step " + step.getStepOrder());
+
+    String action = step.getActionType() != null ? step.getActionType().toLowerCase() : "click";
+    String value  = step.getInputValue();
+
+    // Scroll element into view before acting
+    try {
+        locator.scrollIntoViewIfNeeded(new Locator.ScrollIntoViewIfNeededOptions().setTimeout(3000));
+    } catch (Exception ignored) {}
+
+    switch (action) {
+        case "click":
+            try {
+                locator.click(new Locator.ClickOptions().setTimeout(4000));
+            } catch (Exception ex) {
+                System.out.println("[Playback] Regular click failed/intercepted (" + ex.getMessage() + ") → retrying with force click...");
+                locator.click(new Locator.ClickOptions().setForce(true).setTimeout(4000));
+            }
+            break;
+
+        case "input":
+        case "change":
+        case "type":
+            if (value != null && !value.trim().isEmpty()) {
+                // Click to focus, then clear + type
+                try { locator.click(new Locator.ClickOptions().setTimeout(2000)); } catch (Exception ignored) {}
+                try {
+                    locator.fill("");  // clear existing content
+                    locator.pressSequentially(value,
+                            new Locator.PressSequentiallyOptions().setDelay(60).setTimeout(6000));
+                } catch (Exception ex) {
+                    locator.fill(value);  // fallback to fill() for non-keyboard-friendly fields
+                }
+            }
+            break;
+
+        case "scroll":
+            locator.scrollIntoViewIfNeeded();
+            break;
+
+        default:
+            try {
+                locator.click(new Locator.ClickOptions().setTimeout(4000));
+            } catch (Exception ex) {
+                locator.click(new Locator.ClickOptions().setForce(true).setTimeout(4000));
+            }
+            break;
+    }
+}
 
     // ──────────────────────────────────────────────────────────────────────────
     // Helpers

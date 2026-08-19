@@ -74,7 +74,7 @@ public class AiElementResolver {
             } catch (Exception ignored) {}
         }
 
-        // ── 4. label text fallback ────────────────────────────────────────────
+        // ── 4. label text / text fallback ─────────────────────────────────────
         if (step.getLabelText() != null && !step.getLabelText().trim().isEmpty()) {
             try {
                 Locator loc = page.getByText(step.getLabelText(),
@@ -86,7 +86,26 @@ public class AiElementResolver {
             } catch (Exception ignored) {}
         }
 
-        // ── 5. Last resort — return original broken locator (will throw on action) ──
+        // ── 5. Tag / Role + text content fallback ─────────────────────────────
+        if (step.getAiDescription() != null && step.getAiDescription().contains("'")) {
+            try {
+                int s1 = step.getAiDescription().indexOf("'");
+                int s2 = step.getAiDescription().indexOf("'", s1 + 1);
+                if (s1 != -1 && s2 > s1) {
+                    String textInDesc = step.getAiDescription().substring(s1 + 1, s2).trim();
+                    if (!textInDesc.isEmpty()) {
+                        String roleOrTag = (step.getRole() != null && !step.getRole().trim().isEmpty()) ? step.getRole().toLowerCase() : "*";
+                        Locator loc = page.locator(roleOrTag + ":has-text('" + textInDesc + "')");
+                        if (loc.count() > 0) {
+                            System.out.println("[AiElementResolver] Healed via role/tag+text: " + roleOrTag + ":has-text('" + textInDesc + "')");
+                            return loc.first();
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+
+        // ── 6. Last resort — return original broken locator (will throw on action) ──
         System.out.println("[AiElementResolver] All healing strategies exhausted. Returning original selector.");
         return page.locator(step.getPrimarySelector() != null ? step.getPrimarySelector() : "body").first();
     }

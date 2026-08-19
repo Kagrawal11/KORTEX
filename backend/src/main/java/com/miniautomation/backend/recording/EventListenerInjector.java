@@ -81,12 +81,20 @@ public class EventListenerInjector {
             "      var pLbl = el.closest('label');" +
             "      if (pLbl) labelTxt = pLbl.innerText.trim();" +
             "    }" +
-            // selector building — prefer id, then name, then nth-of-type fallback
+            // selector building — prefer id -> name -> text/aria/title -> nth-of-type fallback
             "    var selector;" +
+            "    var ariaLabel = el.getAttribute('aria-label') || '';" +
+            "    var titleAttr = el.getAttribute('title') || '';" +
             "    if (elId) {" +
             "      selector = '#' + CSS.escape(elId);" +
             "    } else if (elName) {" +
             "      selector = tag + '[name=\"' + elName + '\"]';" +
+            "    } else if (ariaLabel) {" +
+            "      selector = tag + '[aria-label=\"' + ariaLabel.replace(/\"/g, '\\\"') + '\"]';" +
+            "    } else if (titleAttr) {" +
+            "      selector = tag + '[title=\"' + titleAttr.replace(/\"/g, '\\\"') + '\"]';" +
+            "    } else if (txt && txt.length > 0 && txt.length <= 50 && (tag === 'a' || tag === 'button' || tag === 'span' || elRole === 'button' || tag === 'li')) {" +
+            "      selector = tag + ':has-text(\"' + txt.replace(/\"/g, '\\\"') + '\")';" +
             "    } else {" +
             "      var parent = el.parentElement;" +
             "      var siblings = parent ? Array.from(parent.querySelectorAll(':scope > ' + tag)) : [];" +

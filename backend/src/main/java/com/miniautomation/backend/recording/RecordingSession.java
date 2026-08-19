@@ -216,7 +216,16 @@ public class RecordingSession {
                 }
             }
 
-            // ── Rule 5: Keep everything else (clicks on buttons, links, etc.) ──
+            // ── Rule 5: Collapse consecutive duplicate clicks on the exact same selector ──
+            if ("click".equals(type) && !result.isEmpty()) {
+                CapturedEvent last = result.get(result.size() - 1);
+                if ("click".equals(last.getEventType()) && selector.equals(last.getSelector())) {
+                    // Skip redundant back-to-back click on the exact same element
+                    continue;
+                }
+            }
+
+            // ── Rule 6: Keep everything else (clicks on buttons, links, etc.) ──
             result.add(evt);
         }
 
