@@ -27,6 +27,7 @@ public class TestStepEntity {
     private String type;
     private String role;
     private String labelText;
+    private String text;
 
     @Column(length = 2000)
     private String inputValue;
@@ -112,6 +113,14 @@ public class TestStepEntity {
 
     public void setLabelText(String labelText) {
         this.labelText = labelText;
+    }
+
+    public String getText() {
+        return text;
+    }
+
+    public void setText(String text) {
+        this.text = text;
     }
 
     public String getInputValue() {

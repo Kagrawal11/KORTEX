@@ -47,11 +47,24 @@ public class EventListenerInjector {
         System.out.println("[EventListenerInjector] exposeFunction registered OK.");
 
         // Step 2 — Build the JS injection script.
-        // This script:
-        //   a) Guards against double-injection with window.__miniAutoInjected
-        //   b) Extracts rich metadata from every interacted element
-        //   c) Builds a robust, unique CSS selector (prefers id > name > nth-of-type)
-        //   d) Calls window.__miniAutoOnEvent(json) to push events to Java
+        //
+        // Selector priority (most-specific first):
+        //   id → name → aria-label → title → placeholder+type → text (links/buttons) → positional fallback
+        //
+        // The positional fallback ALWAYS qualifies the tag with the element's
+        // type attribute (e.g. input[type=text]) so we never generate a bare
+        // 'input:nth-of-type(1)' that would match hidden __VIEWSTATE fields.
+        //
+        // IMPORTANT: :nth-of-type in CSS only matches by TAG NAME, not attribute.
+        // So 'input[type=text]:nth-of-type(2)' is valid CSS and means:
+        //   "the 2nd <input> among its siblings that also has type=text"
+        // We count siblings using plain querySelectorAll(':scope > input') and
+        // indexOf, then generate 'input:nth-of-type(idx)' which is valid.
+        // The [type=text] qualifier is appended as an additional attribute filter,
+        // NOT as part of the :nth-of-type expression, so CSS remains valid.
+        //
+        // Hidden inputs are skipped entirely in sendEvent() before we even
+        // call extractMeta — they are never intentional user interactions.
         String script = "(() => {" +
             "  if (window.__miniAutoInjected) {" +
             "    console.log('[MiniAuto] Already injected — skipping.');" +
@@ -71,6 +84,8 @@ public class EventListenerInjector {
             "    var ph       = el.getAttribute('placeholder') || '';" +
             "    var val      = el.value || '';" +
             "    var txt      = (el.innerText || el.textContent || '').trim().substring(0, 120);" +
+            "    var ariaLabel = el.getAttribute('aria-label') || '';" +
+            "    var titleAttr = el.getAttribute('title') || '';" +
             // label resolution
             "    var labelTxt = '';" +
             "    if (elId) {" +
@@ -81,25 +96,33 @@ public class EventListenerInjector {
             "      var pLbl = el.closest('label');" +
             "      if (pLbl) labelTxt = pLbl.innerText.trim();" +
             "    }" +
-            // selector building — prefer id -> name -> text/aria/title -> nth-of-type fallback
+
+            // ── Selector building ─────────────────────────────────────────────
             "    var selector;" +
-            "    var ariaLabel = el.getAttribute('aria-label') || '';" +
-            "    var titleAttr = el.getAttribute('title') || '';" +
             "    if (elId) {" +
             "      selector = '#' + CSS.escape(elId);" +
             "    } else if (elName) {" +
             "      selector = tag + '[name=\"' + elName + '\"]';" +
             "    } else if (ariaLabel) {" +
-            "      selector = tag + '[aria-label=\"' + ariaLabel.replace(/\"/g, '\\\"') + '\"]';" +
+            "      selector = tag + '[aria-label=\"' + ariaLabel.replace(/\"/g, '\\\\\"') + '\"]';" +
             "    } else if (titleAttr) {" +
-            "      selector = tag + '[title=\"' + titleAttr.replace(/\"/g, '\\\"') + '\"]';" +
+            "      selector = tag + '[title=\"' + titleAttr.replace(/\"/g, '\\\\\"') + '\"]';" +
+            // For input elements with a placeholder, use placeholder+type — specific and readable
+            "    } else if (tag === 'input' && ph) {" +
+            "      var typeAttr = elType ? '[type=\"' + elType + '\"]' : '';" +
+            "      selector = 'input' + typeAttr + '[placeholder=\"' + ph.replace(/\"/g, '\\\\\"') + '\"]';" +
             "    } else if (txt && txt.length > 0 && txt.length <= 50 && (tag === 'a' || tag === 'button' || tag === 'span' || elRole === 'button' || tag === 'li')) {" +
-            "      selector = tag + ':has-text(\"' + txt.replace(/\"/g, '\\\"') + '\")';" +
+            "      selector = tag + ':has-text(\"' + txt.replace(/\"/g, '\\\\\"') + '\")';" +
             "    } else {" +
+            // Positional fallback. We always use plain ':scope > TAG' to count siblings
+            // (CSS nth-of-type only understands tag name, not attributes).
+            // We then append the type attribute as a SEPARATE filter so the final
+            // selector reads: input:nth-of-type(2)[type=\"text\"]  ← valid CSS.
             "      var parent = el.parentElement;" +
             "      var siblings = parent ? Array.from(parent.querySelectorAll(':scope > ' + tag)) : [];" +
             "      var idx = siblings.indexOf(el) + 1;" +
-            "      selector = tag + (idx > 0 ? ':nth-of-type(' + idx + ')' : '');" +
+            "      var typeAttrFilter = (tag === 'input' && elType) ? '[type=\"' + elType + '\"]' : '';" +
+            "      selector = tag + (idx > 0 ? ':nth-of-type(' + idx + ')' : '') + typeAttrFilter;" +
             "    }" +
             "    return {" +
             "      tag:       tag," +
@@ -118,9 +141,10 @@ public class EventListenerInjector {
             // ── Event sender ─────────────────────────────────────────────────
             "  function sendEvent(eventType, el) {" +
             "    if (!el || el === document || el === window) return;" +
-            // skip body/html/head — too broad
             "    var tag = (el.tagName || '').toLowerCase();" +
             "    if (tag === 'body' || tag === 'html' || tag === 'head') return;" +
+            // Skip hidden inputs — never intentional user interactions
+            "    if (tag === 'input' && el.getAttribute('type') === 'hidden') return;" +
             "    var meta = extractMeta(el);" +
             "    if (!meta) return;" +
             "    meta.eventType = eventType;" +
@@ -136,10 +160,10 @@ public class EventListenerInjector {
             // ── Attach DOM listeners (capture phase = true for full coverage) ─
             "  document.addEventListener('click',  function(e) { sendEvent('click',  e.target); }, true);" +
             "  document.addEventListener('change', function(e) { sendEvent('change', e.target); }, true);" +
-            // Only capture input events on actual <input> / <textarea>
             "  document.addEventListener('input',  function(e) {" +
             "    var t = e.target;" +
             "    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) {" +
+            "      if (t.getAttribute('type') === 'hidden') return;" +
             "      sendEvent('input', t);" +
             "    }" +
             "  }, true);" +

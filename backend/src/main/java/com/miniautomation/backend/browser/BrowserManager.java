@@ -19,6 +19,11 @@ import org.springframework.stereotype.Component;
  *   2. Caller registers exposeFunction() + addInitScript() on that blank page.
  *   3. Call navigateTo(url)          — navigates the already-instrumented page so
  *      the init-script fires on the very first load.
+ *   4. After recording stops, do NOT call closeSession().  The same page is reused
+ *      for playback and for MFA pause/resume.
+ *   5. After playback, do NOT call closeSession().  The browser stays open so the
+ *      operator can inspect the result and the MFA window remains usable.
+ *   6. closeSession() should only be called on explicit user request or app shutdown.
  */
 @Component
 public class BrowserManager {
@@ -34,16 +39,21 @@ public class BrowserManager {
 
     /**
      * Returns the existing live page, or opens a new Chromium browser + page.
-     * Navigates to {@code url} if the page is currently blank or on a different origin.
+     * Navigates to {@code url} only when the page is on about:blank or has a
+     * completely different origin (prevents unwanted re-navigation mid-session).
      */
     public synchronized Page getOrLaunchPage(String url) {
         ensureSessionAlive();
 
         if (url != null && !url.trim().isEmpty()) {
             String current = page.url();
-            if ("about:blank".equalsIgnoreCase(current) || !current.startsWith(url)) {
+            // Only navigate if we're on a blank page or if the base url differs
+            // entirely — do NOT navigate just because query params changed.
+            if ("about:blank".equalsIgnoreCase(current) || !isSameOriginOrSubPath(current, url)) {
                 System.out.println("[BrowserManager] Navigating to: " + url);
                 page.navigate(url);
+            } else {
+                System.out.println("[BrowserManager] Page already on expected origin — skipping navigation. (current=" + current + ")");
             }
         }
         return page;
@@ -83,16 +93,35 @@ public class BrowserManager {
         return context;
     }
 
+    /**
+     * Returns true when a browser session is active and the page is not closed.
+     */
     public boolean isSessionActive() {
         return page != null && !page.isClosed();
     }
 
-    /** Closes everything — browser, context, page, playwright process. */
+    /**
+     * Returns the current page URL safely.
+     * Returns null if the session is not active or the page throws.
+     */
+    public String getCurrentUrl() {
+        try {
+            if (!isSessionActive()) return null;
+            return page.url();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Explicitly closes the browser session.  Should only be called on explicit
+     * user request or on application shutdown — NOT during normal record/play flow.
+     */
     public synchronized void closeSession() {
         teardown();
     }
 
-    // Legacy alias kept for backward compatibility with any existing callers.
+    // Legacy aliases kept for backward compatibility with any existing callers.
     public Page launchBrowser(String url) {
         return getOrLaunchPage(url);
     }
@@ -113,7 +142,7 @@ public class BrowserManager {
             browser = playwright.chromium()
                     .launch(new BrowserType.LaunchOptions()
                             .setHeadless(false)
-                            .setSlowMo(50));   // 50ms slow-mo helps with SPA rendering
+                            .setSlowMo(50));   // 50 ms slow-mo helps with SPA rendering
             context = browser.newContext();
             page = context.newPage();
             System.out.println("[BrowserManager] Browser session ready.");
@@ -138,5 +167,27 @@ public class BrowserManager {
             playwright = null;
         }
         System.out.println("[BrowserManager] Session fully torn down.");
+    }
+
+    /**
+     * Returns true if {@code current} and {@code target} share the same origin
+     * or {@code current} is already at/under the target path.
+     *
+     * This prevents PlaybackEngine from re-navigating to the start URL when the
+     * browser has already moved to a post-login page on the same domain.
+     */
+    private boolean isSameOriginOrSubPath(String current, String target) {
+        try {
+            java.net.URI curUri = new java.net.URI(current);
+            java.net.URI tgtUri = new java.net.URI(target);
+            String curOrigin = curUri.getScheme() + "://" + curUri.getHost()
+                    + (curUri.getPort() != -1 ? ":" + curUri.getPort() : "");
+            String tgtOrigin = tgtUri.getScheme() + "://" + tgtUri.getHost()
+                    + (tgtUri.getPort() != -1 ? ":" + tgtUri.getPort() : "");
+            // Same origin → don't re-navigate; the page has already moved forward
+            return curOrigin.equalsIgnoreCase(tgtOrigin);
+        } catch (Exception e) {
+            return false;
+        }
     }
 }
