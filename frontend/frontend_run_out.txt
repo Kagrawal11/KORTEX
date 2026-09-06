@@ -1,0 +1,74 @@
+
+> frontend@0.0.0 dev
+> vite
+
+5:53:43 PM [vite] (client) Re-optimizing dependencies because vite config has changed
+Port 5173 is in use, trying another one...
+
+  VITE v8.2.1  ready in 644 ms
+
+  ➜  Local:   http://localhost:5174/
+  ➜  Network: use --host to expose
+  ➜  press h + enter to show help
+5:53:44 PM [vite] (client) [optimizer] bundling dependencies...
+6:16:01 PM [vite] (client) hmr update /src/index.css
+6:16:07 PM [vite] (client) hmr update /src/index.css
+6:16:28 PM [vite] (client) hmr update /src/index.css
+6:16:34 PM [vite] (client) hmr update /src/index.css
+6:16:40 PM [vite] (client) hmr update /src/index.css
+6:16:45 PM [vite] (client) hmr update /src/index.css
+6:17:02 PM [vite] (client) hmr update /src/index.css
+6:17:16 PM [vite] (client) hmr update /src/index.css
+6:17:29 PM [vite] (client) hmr update /src/index.css
+6:17:45 PM [vite] (client) hmr update /src/components/Sidebar.tsx
+6:18:05 PM [vite] (client) hmr update /src/components/Topbar.tsx
+6:18:39 PM [vite] (client) hmr update /src/pages/Dashboard.tsx
+6:18:47 PM [vite] (client) hmr update /src/pages/ExecutionHistory.tsx
+6:18:56 PM [vite] (client) hmr update /src/pages/ExecutionHistory.tsx
+6:19:53 PM [vite] (client) hmr update /src/pages/UIAutomationDashboard.tsx
+6:20:09 PM [vite] (client) hmr update /src/pages/TestReport.tsx
+6:21:02 PM [vite] (client) hmr update /src/pages/DataDrivenReport.tsx
+6:21:13 PM [vite] (client) hmr update /src/pages/DataDrivenReport.tsx
+6:21:17 PM [vite] (client) hmr update /src/index.css
+6:22:12 PM [vite] (client) hmr update /src/pages/RecordingWorkspace.tsx
+6:22:17 PM [vite] (client) hmr update /src/pages/RecordingWorkspace.tsx
+6:22:22 PM [vite] (client) hmr update /src/pages/RecordingWorkspace.tsx
+6:22:26 PM [vite] (client) hmr update /src/pages/RecordingWorkspace.tsx
+6:22:56 PM [vite] (client) hmr update /src/pages/RecordingWorkspace.tsx
+6:23:16 PM [vite] (client) hmr update /src/pages/RecordingWorkspace.tsx
+6:23:19 PM [vite] (client) hmr update /src/pages/RecordingWorkspace.tsx
+6:23:51 PM [vite] (client) hmr update /src/components/DataDrivenPanel.tsx
+6:24:08 PM [vite] (client) hmr update /src/components/CreateTestDialog.tsx
+6:24:32 PM [vite] (client) hmr update /src/pages/TestDetails.tsx
+6:24:37 PM [vite] (client) hmr update /src/pages/TestDetails.tsx
+8:39:43 PM [vite] (client) hmr update /src/pages/RecordingWorkspace.tsx, /src/pages/TestDetails.tsx, /src/pages/Dashboard.tsx, /src/pages/UIAutomationDashboard.tsx, /src/components/Topbar.tsx, /src/pages/TestReport.tsx, /src/pages/ExecutionHistory.tsx, /src/pages/DataDrivenReport.tsx, /src/components/DataDrivenPanel.tsx, /src/components/CreateTestDialog.tsx
+8:39:49 PM [vite] (client) hmr update /src/pages/RecordingWorkspace.tsx, /src/pages/TestDetails.tsx, /src/pages/Dashboard.tsx, /src/pages/UIAutomationDashboard.tsx, /src/components/Topbar.tsx, /src/pages/TestReport.tsx, /src/pages/ExecutionHistory.tsx, /src/pages/DataDrivenReport.tsx, /src/components/DataDrivenPanel.tsx, /src/components/CreateTestDialog.tsx
+8:40:37 PM [vite] (client) hmr update /src/pages/RecordingWorkspace.tsx
+8:41:43 PM [vite] (client) hmr update /src/components/Sidebar.tsx
+8:41:55 PM [vite] (client) hmr update /src/pages/ExecutionHistory.tsx
+8:42:04 PM [vite] (client) hmr update /src/App.tsx
+8:42:08 PM [vite] (client) hmr update /src/App.tsx
+8:42:53 PM [vite] (client) hmr update /src/components/DataDrivenPanel.tsx
+8:43:03 PM [vite] (client) hmr update /src/pages/UIAutomationDashboard.tsx
+8:43:08 PM [vite] (client) hmr update /src/pages/UIAutomationDashboard.tsx
+8:43:12 PM [vite] (client) hmr update /src/pages/UIAutomationDashboard.tsx
+8:43:25 PM [vite] (client) hmr update /src/pages/UIAutomationDashboard.tsx
+9:29:10 PM [vite] (client) hmr update /src/index.css
+9:29:49 PM [vite] (client) hmr update /src/components/Sidebar.tsx
+9:32:07 PM [vite] (client) hmr update /src/App.tsx
+9:32:11 PM [vite] (client) hmr update /src/App.tsx
+9:32:17 PM [vite] (client) hmr update /src/pages/Dashboard.tsx
+9:32:26 PM [vite] (client) hmr update /src/pages/Dashboard.tsx
+9:32:51 PM [vite] (client) hmr update /src/pages/Dashboard.tsx
+9:33:01 PM [vite] (client) hmr update /src/pages/Dashboard.tsx
+10:03:49 PM [vite] (client) hmr update /src/pages/ExecutionHistory.tsx
+10:04:00 PM [vite] (client) hmr update /src/components/StatusBadge.tsx
+10:04:26 PM [vite] (client) hmr update /src/components/Sidebar.tsx
+10:04:32 PM [vite] (client) hmr update /src/index.css
+10:05:51 PM [vite] (client) hmr update /src/pages/TestDetails.tsx
+10:05:57 PM [vite] (client) hmr update /src/pages/TestDetails.tsx
+10:06:09 PM [vite] (client) hmr update /src/pages/TestDetails.tsx
+10:06:17 PM [vite] (client) hmr update /src/App.tsx
+10:06:22 PM [vite] (client) hmr update /src/App.tsx
+10:07:29 PM [vite] (client) hmr update /src/pages/Dashboard.tsx
+10:08:27 PM [vite] (client) hmr update /src/pages/Dashboard.tsx

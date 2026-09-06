@@ -55,7 +55,10 @@ public class AutomationService {
     // ──────────────────────────────────────────────────────────────────────────
 
     public void startRecording(String scenarioName, String targetUrl) {
-        recordingSession.startRecording(scenarioName, targetUrl);
+        // Routed through BrowserManager's dedicated Playwright thread — recording
+        // and playback must never touch the shared Playwright session from
+        // different threads (see BrowserManager.runOnPlaywrightThread javadoc).
+        browserManager.runOnPlaywrightThread(() -> recordingSession.startRecording(scenarioName, targetUrl));
     }
 
 
@@ -75,25 +78,31 @@ public class AutomationService {
      * callbacks just as reliably as a close() call, without destroying the session.
      */
     public TestScenarioEntity stopRecording() {
-        System.out.println("[AutomationService] Flushing Playwright event queue via page.waitForTimeout...");
+        // Entire body runs on BrowserManager's dedicated Playwright thread — both
+        // the page.waitForTimeout() call and the (deferred, post-hoc) AI
+        // description generation inside recordingSession.stopRecording() may
+        // touch Playwright/LLM calls that must be pinned to that one thread.
+        return browserManager.runOnPlaywrightThread(() -> {
+            System.out.println("[AutomationService] Flushing Playwright event queue via page.waitForTimeout...");
 
-        // Pump the Playwright event loop on the Playwright thread.
-        // This delivers any in-flight __miniAutoOnEvent callbacks to Java
-        // before we read rawEvents in recordingSession.stopRecording().
-        try {
-            com.microsoft.playwright.Page livePage = browserManager.getPage();
-            if (livePage != null && !livePage.isClosed()) {
-                livePage.waitForTimeout(EVENT_DRAIN_WAIT_MS);
-            } else {
-                Thread.sleep(EVENT_DRAIN_WAIT_MS);
+            // Pump the Playwright event loop on the Playwright thread.
+            // This delivers any in-flight __miniAutoOnEvent callbacks to Java
+            // before we read rawEvents in recordingSession.stopRecording().
+            try {
+                com.microsoft.playwright.Page livePage = browserManager.getPage();
+                if (livePage != null && !livePage.isClosed()) {
+                    livePage.waitForTimeout(EVENT_DRAIN_WAIT_MS);
+                } else {
+                    Thread.sleep(EVENT_DRAIN_WAIT_MS);
+                }
+            } catch (Exception e) {
+                Thread.currentThread().interrupt();
             }
-        } catch (Exception e) {
-            Thread.currentThread().interrupt();
-        }
 
-        // Stop the recording flag and deduplicate/persist captured events.
-        // The browser stays open — no closeSession() call.
-        return recordingSession.stopRecording();
+            // Stop the recording flag and deduplicate/persist captured events.
+            // The browser stays open — no closeSession() call.
+            return recordingSession.stopRecording();
+        });
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -111,7 +120,14 @@ public class AutomationService {
      *     2. The operator to inspect the browser after playback completes.
      */
     public ScenarioExecutionReport runScenario(TestScenarioEntity scenario) {
-        return playbackEngine.executeScenario(scenario);
+        // Entire playback run — including every locator resolution, click, fill,
+        // AI self-healing call, and CAPTCHA/MFA pause — is pinned to
+        // BrowserManager's dedicated Playwright thread. This is the fix for the
+        // bug where "Run Test" opened the browser but performed no actions: the
+        // browser's Playwright/Page objects were created on one HTTP thread and
+        // this method used to run on a different one, silently violating
+        // Playwright's single-thread-confinement requirement.
+        return browserManager.runOnPlaywrightThread(() -> playbackEngine.executeScenario(scenario));
         // NOTE: browserManager.closeSession() intentionally NOT called here.
     }
 }

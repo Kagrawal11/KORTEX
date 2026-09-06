@@ -5,7 +5,9 @@ public class StepExecutionResult {
     public enum StepStatus {
         PASSED,
         HEALED_BY_AI,
-        FAILED
+        FAILED,
+        /** Data-driven only: the mapped dataset column for this step was blank for this row, so the step was not executed at all rather than clicking/filling a stale value. */
+        SKIPPED
     }
 
     private int stepOrder;

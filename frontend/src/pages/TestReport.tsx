@@ -2,7 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { uiAutomationApi } from '../services/uiAutomationApi';
 import type { TestRun } from '../types';
-import { ArrowLeft, CheckCircle2, XCircle, AlertTriangle, Clock, Zap, RefreshCw } from 'lucide-react';
+import { CheckCircle2, XCircle, AlertTriangle, Clock, Zap, RefreshCw, ArrowDownToLine } from 'lucide-react';
+import PageHeader from '../components/PageHeader';
+import StatusBadge from '../components/StatusBadge';
+import StatCard from '../components/StatCard';
+import EmptyState from '../components/EmptyState';
+import Skeleton from '../components/Skeleton';
+import EmailReportButton from '../components/EmailReportButton';
 
 export default function TestReport() {
   const { runId } = useParams();
@@ -10,6 +16,7 @@ export default function TestReport() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stepRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
   const fetchRun = async () => {
     if (!runId) return;
@@ -37,112 +44,118 @@ export default function TestReport() {
     };
   }, [runId]);
 
+  const jumpToFirstFailure = () => {
+    if (!run) return;
+    const firstFailed = run.stepResults?.find(s => s.status === 'FAILED');
+    if (!firstFailed) return;
+    stepRefs.current.get(firstFailed.id)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+
   if (isLoading) {
-    return <div className="container" style={{ textAlign: 'center', paddingTop: '4rem' }}>Loading report...</div>;
+    return (
+      <div className="container">
+        <Skeleton variant="text" width="40%" height={32} />
+        <div className="mt-6"><Skeleton variant="card" count={4} /></div>
+      </div>
+    );
   }
 
   if (error || !run) {
     return (
-      <div className="container" style={{ textAlign: 'center', paddingTop: '4rem' }}>
-        <h3 style={{ color: 'var(--error)' }}>{error || 'Report not found'}</h3>
-        <Link to="/ui-automation" className="btn btn-secondary mt-4" style={{ textDecoration: 'none' }}>Back to Dashboard</Link>
+      <div className="container">
+        <div className="card">
+          <EmptyState
+            title={error || 'Report not found'}
+            action={<Link to="/ui-automation" className="btn btn-secondary no-underline">Back to Dashboard</Link>}
+          />
+        </div>
       </div>
     );
   }
 
   return (
     <div className="container">
-      <div className="mb-4">
-        <Link to={`/ui-automation/tests/${run.scenario.id}`} className="flex items-center gap-2" style={{ color: 'var(--text-muted)', textDecoration: 'none', display: 'inline-flex' }}>
-          <ArrowLeft size={16} /> Back to Test
-        </Link>
-      </div>
-
-      <div className="flex items-start justify-between mb-8">
-        <div>
-          <h1 className="mb-2">Execution Report</h1>
-          <p style={{ color: 'var(--text-muted)' }}>Run #{run.id} • {run.scenario.name}</p>
-        </div>
-        <div>
-          {run.status === 'PASSED' && <span className="badge badge-success" style={{ fontSize: '1.25rem', padding: '0.5rem 1rem' }}>PASSED</span>}
-          {run.status === 'FAILED' && <span className="badge badge-error" style={{ fontSize: '1.25rem', padding: '0.5rem 1rem' }}>FAILED</span>}
-          {run.status === 'RUNNING' && (
-            <span className="badge badge-warning" style={{ fontSize: '1.25rem', padding: '0.5rem 1rem', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-              <RefreshCw size={18} style={{ animation: 'spin 1s linear infinite' }} /> RUNNING
-            </span>
-          )}
-        </div>
-      </div>
+      <PageHeader
+        breadcrumbs={[{ label: 'Dashboard', to: '/' }, { label: 'UI Automation', to: '/ui-automation' }, { label: run.scenario.name, to: `/ui-automation/tests/${run.scenario.id}` }, { label: `Run #${run.id}` }]}
+        title="Execution Report"
+        subtitle={<p style={{ margin: 0 }}>Run #{run.id} &bull; {run.scenario.name}</p>}
+        actions={
+          <>
+            <StatusBadge status={run.status} size="lg" />
+            {run.status !== 'RUNNING' && <EmailReportButton reportType="STANDARD" runId={run.id} />}
+          </>
+        }
+      />
 
       {run.status === 'RUNNING' && (
-        <div className="card mb-6" style={{ backgroundColor: 'rgba(245,158,11,0.08)', borderColor: 'var(--warning)', color: 'var(--warning)', display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <RefreshCw size={18} style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} />
+        <div className="card mb-6" style={{ backgroundColor: 'var(--warning-bg)', borderColor: 'var(--warning)', color: 'var(--warning)', display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <RefreshCw size={18} className="animate-spin" style={{ flexShrink: 0 }} />
           <span>Test is running in the background. This page will update automatically every 3 seconds…</span>
         </div>
       )}
 
+      {/* Run-level error — the backend already returns this for a FAILED run;
+          it simply wasn't surfaced anywhere before. Renders nothing if absent. */}
+      {run.status !== 'RUNNING' && run.errorMessage && (
+        <div className="card mb-6" style={{ backgroundColor: 'var(--error-bg)', borderColor: 'var(--error)', color: 'var(--error)', display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+          <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: '2px' }} />
+          <span>{run.errorMessage}</span>
+        </div>
+      )}
+
       {/* Summary Cards */}
-      <div className="flex gap-4 mb-8" style={{ flexWrap: 'wrap' }}>
-        <div className="card" style={{ flex: '1 1 200px' }}>
-          <div className="flex items-center gap-2 mb-2" style={{ color: 'var(--text-muted)' }}>
-            <Clock size={16} /> <span>Duration</span>
-          </div>
-          <h3>{(run.totalDurationMs / 1000).toFixed(2)}s</h3>
-        </div>
-        <div className="card" style={{ flex: '1 1 200px' }}>
-          <div className="flex items-center gap-2 mb-2" style={{ color: 'var(--text-muted)' }}>
-            <CheckCircle2 size={16} className="text-emerald-500" /> <span>Passed Steps</span>
-          </div>
-          <h3 style={{ color: 'var(--success)' }}>{run.passedSteps} / {run.totalSteps}</h3>
-        </div>
-        <div className="card" style={{ flex: '1 1 200px' }}>
-          <div className="flex items-center gap-2 mb-2" style={{ color: 'var(--text-muted)' }}>
-            <Zap size={16} className="text-blue-500" /> <span>AI Healed</span>
-          </div>
-          <h3 style={{ color: 'var(--primary)' }}>{run.healedByAiSteps}</h3>
-        </div>
-        <div className="card" style={{ flex: '1 1 200px' }}>
-          <div className="flex items-center gap-2 mb-2" style={{ color: 'var(--text-muted)' }}>
-            <XCircle size={16} className="text-red-500" /> <span>Failed Steps</span>
-          </div>
-          <h3 style={{ color: 'var(--error)' }}>{run.failedSteps}</h3>
-        </div>
+      <div className="flex gap-4 mb-8 flex-wrap">
+        <StatCard icon={<Clock size={16} />} label="Duration" value={`${(run.totalDurationMs / 1000).toFixed(2)}s`} flex="1 1 200px" />
+        <StatCard icon={<CheckCircle2 size={16} className="text-emerald-500" />} label="Passed Steps" value={`${run.passedSteps} / ${run.totalSteps}`} tone="success" flex="1 1 200px" />
+        <StatCard icon={<Zap size={16} className="text-blue-500" />} label="AI Healed" value={run.healedByAiSteps} tone="primary" flex="1 1 200px" />
+        <StatCard icon={<XCircle size={16} className="text-red-500" />} label="Failed Steps" value={run.failedSteps} tone="error" flex="1 1 200px" />
       </div>
 
       {/* Execution Timeline */}
       <div className="card">
-        <h2 className="mb-6">Execution Timeline</h2>
+        <div className="flex items-center justify-between mb-6">
+          <h2 style={{ margin: 0 }}>Execution Timeline</h2>
+          {run.failedSteps > 0 && (
+            <button className="btn btn-secondary" onClick={jumpToFirstFailure} style={{ padding: '0.4rem 0.85rem' }}>
+              <ArrowDownToLine size={15} /> Jump to failure
+            </button>
+          )}
+        </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           {run.stepResults && run.stepResults.length > 0 ? (
             run.stepResults.map((step) => (
-              <div key={step.id} style={{ display: 'flex', gap: '1rem', padding: '1rem', backgroundColor: 'var(--bg-input)', borderRadius: 'var(--radius-md)', border: `1px solid ${step.status === 'FAILED' ? 'var(--error)' : 'var(--border-color)'}` }}>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '40px' }}>
+              <div
+                key={step.id}
+                ref={el => { if (el) stepRefs.current.set(step.id, el); }}
+                style={{ display: 'flex', gap: '1rem', padding: '1rem', backgroundColor: 'var(--bg-input)', borderRadius: 'var(--radius-md)', border: `1px solid ${step.status === 'FAILED' ? 'var(--error)' : 'var(--border-color)'}` }}>
+                <div className={`timeline-rail ${step.status === 'PASSED' ? 'success' : step.status === 'FAILED' ? 'error' : step.status === 'HEALED_BY_AI' ? 'warning' : 'neutral'}`} />
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '30px', flexShrink: 0 }}>
                   {step.status === 'PASSED' && <CheckCircle2 className="text-emerald-500" />}
                   {step.status === 'FAILED' && <XCircle className="text-red-500" />}
                   {step.status === 'HEALED_BY_AI' && <AlertTriangle className="text-amber-500" />}
-                  <div style={{ flex: 1, width: '2px', backgroundColor: 'var(--border-color)', margin: '0.5rem 0' }}></div>
+                  {step.status === 'SKIPPED' && <span className="badge badge-neutral" style={{ padding: '2px 6px', fontSize: '0.6rem' }}>—</span>}
                 </div>
-                
+
                 <div style={{ flex: 1 }}>
                   <div className="flex items-center justify-between mb-2">
                     <h4 style={{ margin: 0 }}>
-                      Step {step.stepOrder}: <span style={{ color: 'var(--primary)' }}>{step.actionType}</span>
+                      Step {step.stepOrder}: <span className="text-primary">{step.actionType}</span>
                     </h4>
-                    <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{step.durationMs}ms</span>
+                    <span className="text-subtle" style={{ fontSize: '0.85rem' }}>{step.durationMs}ms</span>
                   </div>
-                  
-                  <div style={{ fontSize: '0.875rem', color: 'var(--text-muted)', fontFamily: 'monospace', backgroundColor: 'rgba(0,0,0,0.2)', padding: '0.5rem', borderRadius: 'var(--radius-sm)' }}>
+
+                  <div className="font-mono text-sm text-muted" style={{ backgroundColor: 'rgba(0,0,0,0.2)', padding: '0.5rem', borderRadius: 'var(--radius-sm)' }}>
                     {step.primarySelector} {step.inputValue && `→ "${step.inputValue}"`}
                   </div>
 
                   {step.status === 'HEALED_BY_AI' && (
-                    <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'rgba(245, 158, 11, 0.1)', color: 'var(--warning)', borderRadius: 'var(--radius-md)', fontSize: '0.875rem' }}>
+                    <div className="text-sm" style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--warning-bg)', color: 'var(--warning)', borderRadius: 'var(--radius-md)' }}>
                       <strong>AI Self-Healing:</strong> The original selector failed, but the AI successfully located the element using heuristics.
                     </div>
                   )}
 
                   {step.status === 'FAILED' && step.errorMessage && (
-                    <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--error-bg)', color: 'var(--error)', borderRadius: 'var(--radius-md)', fontSize: '0.875rem' }}>
+                    <div className="text-sm" style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--error-bg)', color: 'var(--error)', borderRadius: 'var(--radius-md)' }}>
                       <strong>Error:</strong> {step.errorMessage}
                     </div>
                   )}
@@ -150,7 +163,7 @@ export default function TestReport() {
               </div>
             ))
           ) : (
-            <p style={{ color: 'var(--text-muted)' }}>No steps were recorded during this execution.</p>
+            <EmptyState title="No steps were recorded during this execution." />
           )}
         </div>
       </div>

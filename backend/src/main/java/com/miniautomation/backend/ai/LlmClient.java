@@ -72,9 +72,14 @@ public class LlmClient {
             }
         }
 
-        // Fallback strategy: return broad selector if LLM API is inactive
-        System.out.println("[LlmClient] Using heuristic fallback self-healing for: " + originalSelector);
-        return originalSelector;
+        // No LLM API key configured — we have no independent suggestion to offer.
+        // Returning the original selector here used to make the caller think a
+        // "different" healed selector had been found (it hadn't — it's the exact
+        // same string), which produced false HEALED_BY_AI results. Returning null
+        // is honest: "the LLM path has nothing to add", and lets AiElementResolver's
+        // remaining id/name/label heuristics run on their own merits.
+        System.out.println("[LlmClient] No LLM API key configured — skipping LLM self-healing for: " + originalSelector);
+        return null;
     }
 
     private String callLlmApi(String prompt) throws Exception {

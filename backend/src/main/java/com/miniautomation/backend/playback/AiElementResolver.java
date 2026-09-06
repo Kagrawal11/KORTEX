@@ -2,29 +2,46 @@ package com.miniautomation.backend.playback;
 
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;
+import com.microsoft.playwright.options.AriaRole;
 import com.miniautomation.backend.ai.LlmClient;
 import com.miniautomation.backend.entity.TestStepEntity;
 import org.springframework.stereotype.Component;
 
 /**
- * AiElementResolver
+ * AiElementResolver — Self-healing locator resolution via deterministic
+ * semantic signals, LLM, and heuristic fallbacks.
  *
- * Resolves a recorded element when the original selector is no longer
- * directly usable during playback.
+ * Called ONLY when PlaybackEngine has confirmed the primary selector truly
+ * matches nothing in the DOM (count() == 0) — never for a selector that
+ * matched but was momentarily not visible/settled.
  *
- * Resolution strategy:
+ * Resolution order (when primary CSS selector genuinely matches nothing):
+ *   0. data-testid/data-test/data-cy/data-qa direct match — the single most
+ *      reliable signal, since it was authored specifically to identify this
+ *      element for tests. Tried first, ahead of the (slower, non-
+ *      deterministic) LLM call.
+ *   0.5. Semantic role + accessible name match via Playwright's real
+ *        getByRole() — only attempted when the recorded role string maps to
+ *        an actual ARIA role (never a bare tag-name fallback like "div").
+ *   1. LLM API call with truncated page DOM → returns a new CSS selector (only if configured)
+ *   2. id attribute direct match
+ *   3. name attribute match
+ *   4. Visible label text partial-match
+ *   5. Role/tag + text content match
+ *   6. Last resort: return null — every strategy failed to find a genuinely
+ *      different element, so there is nothing to report as "healed". The
+ *      caller treats null as a real failure instead of a false success.
  *
- * 1. Clean and retry the recorded selector
- * 2. Resolve dynamic dropdown/autocomplete options by visible text
- * 3. Ask LLM for a healed selector
- * 4. Resolve by element id
- * 5. Resolve by name
- * 6. Resolve by visible label/text
- * 7. Resolve by role/tag + text
- *
- * Important:
- * Dynamic dropdown options often have changing ids/classes.
- * Therefore visible text is intentionally treated as a strong fallback.
+ * Every strategy above can match MORE THAN ONE element on real pages (a
+ * duplicate mobile/desktop DOM twin, a hidden pre-render, etc. — confirmed
+ * on a real LinkedIn run where an "Email or phone" label matched two inputs,
+ * only one of them actually rendered). Blindly taking the first DOM match
+ * risks handing back an element that will never become interactable, which
+ * then hangs until PlaybackEngine's own timeout. pickVisibleCandidate()
+ * scans every match and prefers the first one that is actually visible
+ * (and, for typing actions, genuinely editable) — mirroring the same
+ * visible-candidate scan PlaybackEngine already does for multi-matching
+ * structural CSS selectors.
  */
 @Component
 public class AiElementResolver {
@@ -35,804 +52,275 @@ public class AiElementResolver {
         this.llmClient = llmClient;
     }
 
-    /**
-     * Main self-healing entry point.
-     */
     public Locator resolveSelfHealedLocator(Page page, TestStepEntity step) {
+        System.out.println("[AiElementResolver] Self-healing for primary selector: " + step.getPrimarySelector());
+        boolean typingAction = isTypingAction(step);
 
-        if (page == null || page.isClosed()) {
-            throw new IllegalStateException("Playback page is null or already closed.");
+        // ── 0. data-testid family direct match ───────────────────────────────
+        if (step.getTestId() != null && !step.getTestId().trim().isEmpty()) {
+            try {
+                String testId = step.getTestId();
+                Locator candidate = pickVisibleCandidate(
+                        page.locator("[data-testid='" + testId + "'], [data-test='" + testId
+                                + "'], [data-cy='" + testId + "'], [data-qa='" + testId + "']"),
+                        typingAction);
+                if (candidate != null) {
+                    System.out.println("[AiElementResolver] Healed via testId: " + testId);
+                    return candidate;
+                }
+            } catch (Exception ignored) {}
         }
 
-        if (step == null) {
-            throw new IllegalArgumentException("Test step cannot be null.");
+        // ── 0.5. Semantic role + accessible name match ───────────────────────
+        // step.getRole() falls back to the bare tag name when the element has
+        // no explicit ARIA role (see EventListenerInjector's extractMeta —
+        // "elRole = el.getAttribute('role') || tag"), so most recorded steps
+        // will NOT map to a real AriaRole enum constant (e.g. "div", "input").
+        // AriaRole.valueOf() throwing IllegalArgumentException is exactly how
+        // those are safely skipped — never a role we invent or guess at.
+        if (step.getRole() != null && !step.getRole().trim().isEmpty()) {
+            try {
+                AriaRole ariaRole = AriaRole.valueOf(step.getRole().trim().toUpperCase());
+                String accessibleName = firstNonBlank(step.getAriaLabel(), step.getLabelText(),
+                        step.getText(), step.getPlaceholder());
+                if (accessibleName != null) {
+                    Locator candidate = pickVisibleCandidate(
+                            page.getByRole(ariaRole, new Page.GetByRoleOptions()
+                                    .setName(accessibleName).setExact(false)),
+                            typingAction);
+                    if (candidate != null) {
+                        System.out.println("[AiElementResolver] Healed via role+accessible name: "
+                                + ariaRole + " / \"" + accessibleName + "\"");
+                        return candidate;
+                    }
+                }
+            } catch (IllegalArgumentException notARealAriaRole) {
+                // step.getRole() was a tag-name fallback, not a real ARIA role.
+            } catch (Exception ignored) {}
         }
 
-        String primarySelector = safe(step.getPrimarySelector());
-        String text = getBestText(step);
-
-        System.out.println(
-                "[AiElementResolver] Self-healing for selector: "
-                        + primarySelector
-                        + " | text: "
-                        + text);
-
-        // ============================================================
-        // 1. RETRY CLEANED PRIMARY SELECTOR
-        // ============================================================
-        //
-        // Recorded/healed selectors sometimes contain escaped characters
-        // such as:
-        //
-        // li\:has-text("ABC")
-        //
-        // Playwright expects:
-        //
-        // li:has-text("ABC")
-        //
-        // So clean the selector before retrying it.
-        //
-        if (!primarySelector.isBlank()) {
-
-            String cleanedSelector = cleanPlaywrightSelector(primarySelector);
-
-            if (!cleanedSelector.equals(primarySelector)) {
-                System.out.println(
-                        "[AiElementResolver] Cleaned selector: "
-                                + cleanedSelector);
-            }
-
-            Locator locator = tryVisibleLocator(page, cleanedSelector);
-
-            if (locator != null) {
-                System.out.println(
-                        "[AiElementResolver] Primary selector resolved after cleanup.");
-                return locator;
-            }
-        }
-
-        // ============================================================
-        // 2. DROPDOWN / AUTOCOMPLETE TEXT RESOLUTION
-        // ============================================================
-        //
-        // This is especially important for Step 15.
-        //
-        // Example:
-        //
-        // 3IINFO (3I INFOTECH LIMITED-INE748C01038)
-        //
-        // The li/class/id can change between recording and playback,
-        // but the visible option text remains available.
-        //
-        if (!text.isBlank()) {
-
-            Locator dropdownOption = findDropdownOptionByText(page, text);
-
-            if (dropdownOption != null) {
-
-                System.out.println(
-                        "[AiElementResolver] Dropdown option resolved by visible text: "
-                                + text);
-
-                return dropdownOption;
-            }
-        }
-
-        // ============================================================
-        // 3. LLM SELF-HEALING
-        // ============================================================
-
+        // ── 1. LLM resolution ─────────────────────────────────────────────────
         try {
-
             String pageDom = page.content();
-
-            // Keep request reasonably small.
-            String snippet = pageDom.length() > 12000
-                    ? pageDom.substring(0, 12000)
-                    : pageDom;
+            String snippet = pageDom.length() > 4000 ? pageDom.substring(0, 4000) : pageDom;
 
             String healedSelector = llmClient.resolveSelfHealedLocator(
-                    primarySelector,
+                    step.getPrimarySelector(),
                     step.getAiDescription(),
-                    snippet);
+                    snippet
+            );
 
-            if (healedSelector != null && !healedSelector.trim().isEmpty()) {
-
-                healedSelector = cleanPlaywrightSelector(
-                        healedSelector.trim());
-
-                System.out.println(
-                        "[AiElementResolver] LLM suggests: "
-                                + healedSelector);
-
-                Locator healedLocator = tryVisibleLocator(
-                        page,
-                        healedSelector);
-
-                if (healedLocator != null) {
-
-                    System.out.println(
-                            "[AiElementResolver] LLM healed locator resolved OK.");
-
-                    return healedLocator;
-                }
-
-                /*
-                 * Sometimes the LLM returns a selector that technically
-                 * resolves but points to a dynamic dropdown structure.
-                 *
-                 * If the selector contains has-text and we have recorded
-                 * text, try the text independently as well.
-                 */
-                if (!text.isBlank()) {
-
-                    Locator textLocator = findDropdownOptionByText(
-                            page,
-                            text);
-
-                    if (textLocator != null) {
-
-                        System.out.println(
-                                "[AiElementResolver] LLM selector failed, "
-                                        + "but visible text fallback succeeded: "
-                                        + text);
-
-                        return textLocator;
-                    }
+            if (healedSelector != null && !healedSelector.trim().isEmpty()
+                    && !healedSelector.equals(step.getPrimarySelector())) {
+                System.out.println("[AiElementResolver] LLM suggests: " + healedSelector);
+                Locator candidate = pickVisibleCandidate(page.locator(healedSelector), typingAction);
+                if (candidate != null) {
+                    System.out.println("[AiElementResolver] LLM healed locator resolved OK.");
+                    return candidate;
                 }
             }
-
         } catch (Exception e) {
-
-            System.out.println(
-                    "[AiElementResolver] LLM healing failed: "
-                            + e.getMessage());
+            System.out.println("[AiElementResolver] LLM call failed: " + e.getMessage());
         }
 
-        // ============================================================
-        // 4. ID FALLBACK
-        // ============================================================
-
-        String elementId = safe(step.getElementId());
-
-        if (!elementId.isBlank()) {
-
+        // ── 2. id attribute fallback ──────────────────────────────────────────
+        if (step.getElementId() != null && !step.getElementId().trim().isEmpty()) {
             try {
-
-                Locator locator = page.locator(
-                        "[id=\"" + escapeCssAttribute(elementId) + "\"]").first();
-
-                if (locator.count() > 0
-                        && locator.isVisible(
-                                new Locator.IsVisibleOptions()
-                                        .setTimeout(2000))) {
-
-                    System.out.println(
-                            "[AiElementResolver] Healed via id: "
-                                    + elementId);
-
-                    return locator;
+                Locator candidate = pickVisibleCandidate(
+                        page.locator("[id='" + step.getElementId() + "']"), typingAction);
+                if (candidate != null) {
+                    System.out.println("[AiElementResolver] Healed via id: " + step.getElementId());
+                    return candidate;
                 }
-
-            } catch (Exception e) {
-
-                System.out.println(
-                        "[AiElementResolver] ID fallback failed: "
-                                + e.getMessage());
-            }
+            } catch (Exception ignored) {}
         }
 
-        // ============================================================
-        // 5. NAME FALLBACK
-        // ============================================================
-
-        String name = safe(step.getName());
-
-        if (!name.isBlank()) {
-
+        // ── 3. name attribute fallback ────────────────────────────────────────
+        if (step.getName() != null && !step.getName().trim().isEmpty()) {
             try {
-
-                Locator locator = page.locator(
-                        "[name=\"" + escapeCssAttribute(name) + "\"]").first();
-
-                if (locator.count() > 0
-                        && locator.isVisible(
-                                new Locator.IsVisibleOptions()
-                                        .setTimeout(2000))) {
-
-                    System.out.println(
-                            "[AiElementResolver] Healed via name: "
-                                    + name);
-
-                    return locator;
+                Locator candidate = pickVisibleCandidate(
+                        page.locator("[name='" + step.getName() + "']"), typingAction);
+                if (candidate != null) {
+                    System.out.println("[AiElementResolver] Healed via name: " + step.getName());
+                    return candidate;
                 }
-
-            } catch (Exception e) {
-
-                System.out.println(
-                        "[AiElementResolver] Name fallback failed: "
-                                + e.getMessage());
-            }
+            } catch (Exception ignored) {}
         }
 
-        // ============================================================
-        // 6. VISIBLE TEXT FALLBACK
-        // ============================================================
-
-        if (!text.isBlank()) {
-
-            try {
-
-                Locator exactText = page.getByText(
-                        text,
-                        new Page.GetByTextOptions()
-                                .setExact(true))
-                        .first();
-
-                if (exactText.count() > 0
-                        && exactText.isVisible(
-                                new Locator.IsVisibleOptions()
-                                        .setTimeout(2000))) {
-
-                    System.out.println(
-                            "[AiElementResolver] Healed via exact visible text: "
-                                    + text);
-
-                    return exactText;
-                }
-
-            } catch (Exception e) {
-
-                System.out.println(
-                        "[AiElementResolver] Exact text fallback failed: "
-                                + e.getMessage());
-            }
-        }
-
-        // ============================================================
-        // 7. LABEL TEXT FALLBACK
-        // ============================================================
-
-        String labelText = safe(step.getLabelText());
-
-        if (!labelText.isBlank()) {
-
-            try {
-
-                Locator label = page.getByText(
-                        labelText,
-                        new Page.GetByTextOptions()
-                                .setExact(false))
-                        .first();
-
-                if (label.count() > 0
-                        && label.isVisible(
-                                new Locator.IsVisibleOptions()
-                                        .setTimeout(2000))) {
-
-                    System.out.println(
-                            "[AiElementResolver] Healed via label text: "
-                                    + labelText);
-
-                    return label;
-                }
-
-            } catch (Exception e) {
-
-                System.out.println(
-                        "[AiElementResolver] Label fallback failed: "
-                                + e.getMessage());
-            }
-        }
-
-        // ============================================================
-        // 8. ROLE / TAG + TEXT FALLBACK
-        // ============================================================
-
-        String aiDescription = safe(step.getAiDescription());
-
-        if (!aiDescription.isBlank() && !text.isBlank()) {
-
-            try {
-
-                String role = safe(step.getRole());
-
-                if (!role.isBlank()) {
-
-                    Locator roleLocator = page.locator(
-                            role + ":has-text(\""
-                                    + escapeHasText(text)
-                                    + "\")")
-                            .first();
-
-                    if (roleLocator.count() > 0
-                            && roleLocator.isVisible(
-                                    new Locator.IsVisibleOptions()
-                                            .setTimeout(2000))) {
-
-                        System.out.println(
-                                "[AiElementResolver] Healed via role + text: "
-                                        + role
-                                        + " / "
-                                        + text);
-
-                        return roleLocator;
-                    }
-                }
-
-            } catch (Exception e) {
-
-                System.out.println(
-                        "[AiElementResolver] Role/text fallback failed: "
-                                + e.getMessage());
-            }
-        }
-
-        // ============================================================
-        // 9. LAST RESORT
-        // ============================================================
-
-        System.out.println(
-                "[AiElementResolver] All healing strategies exhausted.");
-
-        if (!primarySelector.isBlank()) {
-
-            return page.locator(
-                    cleanPlaywrightSelector(primarySelector)).first();
-        }
-
-        return page.locator("body").first();
-    }
-
-    // ========================================================================
-    // DROPDOWN / AUTOCOMPLETE RESOLUTION
-    // ========================================================================
-
-    /**
-     * Finds a visible dropdown/autocomplete option using its text.
-     *
-     * We intentionally try several common structures because different
-     * applications implement dropdowns differently:
-     *
-     * - role=option
-     * - li
-     * - ul li
-     * - autocomplete containers
-     * - generic visible text
-     */
-    private Locator findDropdownOptionByText(
-            Page page,
-            String text) {
-
-        if (text == null || text.trim().isEmpty()) {
-            return null;
-        }
-
-        String targetText = text.trim();
-
-        System.out.println(
-                "[AiElementResolver] Searching dropdown option by text: "
-                        + targetText);
-
-        /*
-         * Candidate 1:
-         *
-         * ARIA dropdown.
-         */
-        try {
-
-            Locator options = page.locator("[role='option']");
-
-            Locator candidate = findVisibleTextInCollection(
-                    options,
-                    targetText);
-
-            if (candidate != null) {
-                return candidate;
-            }
-
-        } catch (Exception ignored) {
-        }
-
-        /*
-         * Candidate 2:
-         *
-         * Standard HTML dropdown/autocomplete li.
-         */
-        try {
-
-            Locator listItems = page.locator("li");
-
-            Locator candidate = findVisibleTextInCollection(
-                    listItems,
-                    targetText);
-
-            if (candidate != null) {
-                return candidate;
-            }
-
-        } catch (Exception ignored) {
-        }
-
-        /*
-         * Candidate 3:
-         *
-         * jQuery UI autocomplete.
-         */
-        try {
-
-            Locator autocompleteItems = page.locator(
-                    ".ui-autocomplete li");
-
-            Locator candidate = findVisibleTextInCollection(
-                    autocompleteItems,
-                    targetText);
-
-            if (candidate != null) {
-                return candidate;
-            }
-
-        } catch (Exception ignored) {
-        }
-
-        /*
-         * Candidate 4:
-         *
-         * Generic visible exact text.
-         *
-         * This is important because some applications don't use
-         * li at all. They may use div/span elements.
-         */
-        try {
-
-            Locator exactText = page.getByText(
-                    targetText,
-                    new Page.GetByTextOptions()
-                            .setExact(true))
-                    .first();
-
-            if (exactText.count() > 0
-                    && exactText.isVisible(
-                            new Locator.IsVisibleOptions()
-                                    .setTimeout(2000))) {
-
-                return exactText;
-            }
-
-        } catch (Exception ignored) {
-        }
-
-        /*
-         * Candidate 5:
-         *
-         * Partial text as final dropdown fallback.
-         */
-        try {
-
-            Locator partialText = page.getByText(
-                    targetText,
-                    new Page.GetByTextOptions()
-                            .setExact(false))
-                    .first();
-
-            if (partialText.count() > 0
-                    && partialText.isVisible(
-                            new Locator.IsVisibleOptions()
-                                    .setTimeout(2000))) {
-
-                return partialText;
-            }
-
-        } catch (Exception ignored) {
-        }
-
-        return null;
-    }
-
-    /**
-     * Searches a collection for an element whose visible text matches
-     * the requested text.
-     */
-    private Locator findVisibleTextInCollection(
-            Locator collection,
-            String targetText) {
-
-        try {
-
-            int count = collection.count();
-
-            for (int i = 0; i < count; i++) {
-
-                Locator candidate = collection.nth(i);
-
+        // ── 4. label text / text fallback ─────────────────────────────────────
+        //
+        // For a typing action (input/change/type/fill), try getByLabel() FIRST.
+        // getByLabel resolves to the FORM CONTROL a label describes (via
+        // <label for=>, a wrapping <label>, aria-labelledby, or aria-label) —
+        // this is Playwright's purpose-built accessible-name resolution, and
+        // is what's actually needed here. getByText(), by contrast, matches
+        // whatever element RENDERS that text — on a "floating label" input
+        // design (the label text is its own <div>/<span> overlaying the real
+        // <input>, common on modern sites e.g. LinkedIn's login form) that is
+        // the label/placeholder element itself, never the input.
+        //
+        // looksEditable() is a defense-in-depth check on top of both
+        // strategies: even a getByLabel/getByText match must resolve to a
+        // genuine <input>/<textarea>/contenteditable element before being
+        // accepted for a typing action. pickVisibleCandidate() additionally
+        // scans past any match that isn't currently VISIBLE — a page can
+        // have more than one element associated with the same label (e.g. a
+        // hidden responsive-layout twin), and the wrong one hangs identically
+        // to a non-editable one. Click-type steps are completely unaffected
+        // by the editable gate — only the visibility scan applies to them.
+        if (step.getLabelText() != null && !step.getLabelText().trim().isEmpty()) {
+            String labelText = step.getLabelText();
+
+            if (typingAction) {
                 try {
-
-                    if (!candidate.isVisible(
-                            new Locator.IsVisibleOptions()
-                                    .setTimeout(1000))) {
-                        continue;
-                    }
-
-                    String actualText = candidate.innerText();
-
-                    if (actualText == null) {
-                        continue;
-                    }
-
-                    actualText = actualText.trim();
-
-                    /*
-                     * First preference = exact text.
-                     */
-                    if (actualText.equals(targetText)) {
+                    Locator candidate = pickVisibleCandidate(
+                            page.getByLabel(labelText, new Page.GetByLabelOptions().setExact(false)), true);
+                    if (candidate != null) {
+                        System.out.println("[AiElementResolver] Healed via label (associated form control): " + labelText);
                         return candidate;
                     }
-
-                } catch (Exception ignored) {
-                }
+                    System.out.println("[AiElementResolver] No visible, editable getByLabel match for \"" + labelText
+                            + "\" — trying getByText fallback.");
+                } catch (Exception ignored) {}
             }
 
-            /*
-             * Second pass = normalized text.
-             *
-             * This handles minor whitespace/newline differences.
-             */
-            String normalizedTarget = normalizeText(targetText);
-
-            for (int i = 0; i < count; i++) {
-
-                Locator candidate = collection.nth(i);
-
-                try {
-
-                    if (!candidate.isVisible(
-                            new Locator.IsVisibleOptions()
-                                    .setTimeout(1000))) {
-                        continue;
-                    }
-
-                    String actualText = candidate.innerText();
-
-                    if (actualText == null) {
-                        continue;
-                    }
-
-                    if (normalizeText(actualText)
-                            .equals(normalizedTarget)) {
-
-                        return candidate;
-                    }
-
-                } catch (Exception ignored) {
+            try {
+                Locator candidate = pickVisibleCandidate(
+                        page.getByText(labelText, new Page.GetByTextOptions().setExact(false)), typingAction);
+                if (candidate != null) {
+                    System.out.println("[AiElementResolver] Healed via label text: " + labelText);
+                    return candidate;
                 }
-            }
-
-        } catch (Exception ignored) {
+                System.out.println("[AiElementResolver] No visible" + (typingAction ? "/editable" : "")
+                        + " getByText match for \"" + labelText + "\".");
+            } catch (Exception ignored) {}
         }
 
+        // ── 5. Tag / Role + text content fallback ─────────────────────────────
+        if (step.getAiDescription() != null && step.getAiDescription().contains("'")) {
+            try {
+                int s1 = step.getAiDescription().indexOf("'");
+                int s2 = step.getAiDescription().indexOf("'", s1 + 1);
+                if (s1 != -1 && s2 > s1) {
+                    String textInDesc = step.getAiDescription().substring(s1 + 1, s2).trim();
+                    if (!textInDesc.isEmpty()) {
+                        String roleOrTag = (step.getRole() != null && !step.getRole().trim().isEmpty()) ? step.getRole().toLowerCase() : "*";
+                        Locator candidate = pickVisibleCandidate(
+                                page.locator(roleOrTag + ":has-text('" + textInDesc + "')"), typingAction);
+                        if (candidate != null) {
+                            System.out.println("[AiElementResolver] Healed via role/tag+text: " + roleOrTag + ":has-text('" + textInDesc + "')");
+                            return candidate;
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+
+        // ── 6. Last resort ──────────────────────────────────────────────────
+        // Every strategy above tries to find a DIFFERENT, genuinely matching
+        // locator. If none of them worked, there is nothing to "heal" — the
+        // element is not identifiable by any attribute we know. Returning the
+        // original (already-failed) selector here used to make the caller
+        // believe healing had succeeded (a non-null Locator is all it checks
+        // for), so a step could be reported as HEALED_BY_AI while nothing was
+        // actually located or fixed. Return null so the caller treats this as
+        // a genuine failure instead of a false "healed" success.
+        System.out.println("[AiElementResolver] All healing strategies exhausted for: "
+                + step.getPrimarySelector() + " — no different locator could be found.");
         return null;
     }
 
-    // ========================================================================
-    // PRIMARY SELECTOR HANDLING
-    // ========================================================================
+    /**
+     * Returns the first argument that is non-null and non-blank, or null if
+     * every candidate is blank. Used to compute an accessible name from the
+     * recorded signals in priority order (aria-label is the most authoritative
+     * since it's an explicit accessibility annotation; placeholder is the
+     * weakest since it's not even guaranteed to be exposed as the accessible
+     * name by every browser/AT combination).
+     */
+    private String firstNonBlank(String... candidates) {
+        for (String candidate : candidates) {
+            if (candidate != null && !candidate.trim().isEmpty()) {
+                return candidate;
+            }
+        }
+        return null;
+    }
 
     /**
-     * Tries a selector and returns it only if it resolves to a visible element.
+     * True for actions that operate on a text-entry element (as opposed to
+     * click/select/hover-style actions, where a text-content match is
+     * exactly what we want and must not be second-guessed). "keydown" is
+     * included alongside the fill-style actions — it represents pressing a
+     * key (currently only Enter) inside a text field, so self-healing should
+     * hold it to the same "must resolve to a genuinely editable element"
+     * standard rather than accepting a decorative element that merely
+     * happens to share the field's label.
      */
-    private Locator tryVisibleLocator(
-            Page page,
-            String selector) {
+    private boolean isTypingAction(TestStepEntity step) {
+        String action = step.getActionType();
+        if (action == null) return false;
+        String a = action.trim().toLowerCase();
+        return a.equals("input") || a.equals("change") || a.equals("type") || a.equals("fill")
+                || a.equals("keydown");
+    }
 
-        if (selector == null || selector.trim().isEmpty()) {
+    /**
+     * Scans every element a (possibly multi-match) locator resolves to and
+     * returns the first one that is currently VISIBLE — and, when
+     * requireEditable is true, also passes looksEditable() — instead of
+     * blindly trusting DOM order via first(). Real pages commonly render
+     * more than one element that would match the same id/name/label/text
+     * (a hidden responsive-layout twin, a duplicate pre-render, etc.); only
+     * one of them is the genuine, currently-rendered control. Returns null
+     * — an honest "no usable match" — if nothing qualifies, rather than
+     * handing back a candidate already known to be uninteractable.
+     */
+    private Locator pickVisibleCandidate(Locator multi, boolean requireEditable) {
+        int count;
+        try {
+            count = multi.count();
+        } catch (Exception e) {
             return null;
         }
-
-        try {
-
-            Locator locator = page.locator(selector).first();
-
-            if (locator.count() > 0
-                    && locator.isVisible(
-                            new Locator.IsVisibleOptions()
-                                    .setTimeout(3000))) {
-
-                return locator;
+        for (int i = 0; i < count; i++) {
+            Locator candidate = multi.nth(i);
+            try {
+                if (!candidate.isVisible()) continue;
+                if (requireEditable && !looksEditable(candidate)) continue;
+                return candidate;
+            } catch (Exception ignored) {
+                // keep scanning remaining candidates
             }
-
-        } catch (Exception e) {
-
-            System.out.println(
-                    "[AiElementResolver] Selector failed: "
-                            + selector
-                            + " | "
-                            + e.getMessage());
         }
-
         return null;
     }
 
     /**
-     * Cleans selectors generated by recording or LLM.
-     *
-     * Most importantly:
-     *
-     * li\:has-text(...)
-     *
-     * becomes:
-     *
-     * li:has-text(...)
-     *
-     * Also removes accidental markdown/code fences.
+     * Best-effort check that a resolved locator is something you can actually
+     * type into: a real <input> (excluding non-text input types), a
+     * <textarea>, or a contenteditable element. Any evaluation failure (e.g.
+     * the locator is already detached) is treated as "not editable" so the
+     * caller keeps looking rather than accepting a broken candidate.
      */
-    private String cleanPlaywrightSelector(String selector) {
-
-        if (selector == null) {
-            return "";
-        }
-
-        String cleaned = selector.trim();
-
-        // Remove markdown code fences if an LLM returned them.
-        cleaned = cleaned.replace("```css", "");
-        cleaned = cleaned.replace("```CSS", "");
-        cleaned = cleaned.replace("```", "");
-        cleaned = cleaned.trim();
-
-        /*
-         * Fix escaped Playwright pseudo selector.
-         *
-         * li\:has-text(...)
-         * ^
-         *
-         * should be:
-         *
-         * li:has-text(...)
-         */
-        cleaned = cleaned.replace("\\:has-text", ":has-text");
-
-        /*
-         * Same protection for common Playwright pseudo selectors.
-         */
-        cleaned = cleaned.replace("\\:text(", ":text(");
-        cleaned = cleaned.replace("\\:visible", ":visible");
-        cleaned = cleaned.replace("\\:nth-match", ":nth-match");
-        cleaned = cleaned.replace("\\:has(", ":has(");
-
-        /*
-         * Some LLM responses may escape quotes unnecessarily.
-         * Do not globally remove all backslashes because CSS selectors
-         * can legitimately contain escaped characters.
-         */
-        return cleaned.trim();
-    }
-
-    // ========================================================================
-    // TEXT HELPERS
-    // ========================================================================
-
-    /**
-     * Determines the best human-readable text available for the step.
-     *
-     * For dropdown options, recorded element text is preferred.
-     */
-    private String getBestText(TestStepEntity step) {
-
-        String text = safe(step.getText());
-
-        if (!text.isBlank()) {
-            return text.trim();
-        }
-
-        String label = safe(step.getLabelText());
-
-        if (!label.isBlank()) {
-            return label.trim();
-        }
-
-        /*
-         * Some older recordings may not have getText().
-         * In that case aiDescription can sometimes contain the visible
-         * element text.
-         */
-        String description = safe(step.getAiDescription());
-
-        if (!description.isBlank()) {
-
-            String extracted = extractQuotedText(description);
-
-            if (!extracted.isBlank()) {
-                return extracted;
-            }
-        }
-
-        return "";
-    }
-
-    /**
-     * Extracts text between the first pair of single or double quotes.
-     */
-    private String extractQuotedText(String value) {
-
+    private boolean looksEditable(Locator locator) {
         try {
-
-            int singleStart = value.indexOf('\'');
-
-            if (singleStart >= 0) {
-
-                int singleEnd = value.indexOf(
-                        '\'',
-                        singleStart + 1);
-
-                if (singleEnd > singleStart) {
-
-                    String text = value.substring(
-                            singleStart + 1,
-                            singleEnd).trim();
-
-                    if (!text.isEmpty()) {
-                        return text;
-                    }
-                }
-            }
-
-            int doubleStart = value.indexOf('"');
-
-            if (doubleStart >= 0) {
-
-                int doubleEnd = value.indexOf(
-                        '"',
-                        doubleStart + 1);
-
-                if (doubleEnd > doubleStart) {
-
-                    return value.substring(
-                            doubleStart + 1,
-                            doubleEnd).trim();
-                }
-            }
-
-        } catch (Exception ignored) {
+            Object result = locator.evaluate(
+                    "el => {" +
+                    "  const tag = el.tagName ? el.tagName.toLowerCase() : '';" +
+                    "  if (tag === 'textarea') return true;" +
+                    "  if (tag === 'input') {" +
+                    "    const type = (el.getAttribute('type') || 'text').toLowerCase();" +
+                    "    const nonText = ['hidden','button','submit','reset','checkbox','radio','image','file','range','color'];" +
+                    "    return !nonText.includes(type);" +
+                    "  }" +
+                    "  if (el.isContentEditable) return true;" +
+                    "  return false;" +
+                    "}"
+            );
+            return Boolean.TRUE.equals(result);
+        } catch (Exception e) {
+            return false;
         }
-
-        return "";
-    }
-
-    private String normalizeText(String value) {
-
-        if (value == null) {
-            return "";
-        }
-
-        return value
-                .replace('\u00A0', ' ')
-                .replaceAll("\\s+", " ")
-                .trim();
-    }
-
-    private String escapeHasText(String value) {
-
-        if (value == null) {
-            return "";
-        }
-
-        return value
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"");
-    }
-
-    private String escapeCssAttribute(String value) {
-
-        if (value == null) {
-            return "";
-        }
-
-        return value
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"");
-    }
-
-    private String safe(String value) {
-        return value == null ? "" : value;
     }
 }

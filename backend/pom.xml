@@ -58,11 +58,56 @@
             <version>1.45.0</version>
         </dependency>
 
+        <!-- axe-core + Playwright Java binding (Accessibility Testing scans) -->
+        <dependency>
+            <groupId>com.deque.html.axe-core</groupId>
+            <artifactId>playwright</artifactId>
+            <version>4.10.1</version>
+        </dependency>
+
         <!-- Jsoup (DOM structural analysis) -->
         <dependency>
             <groupId>org.jsoup</groupId>
             <artifactId>jsoup</artifactId>
             <version>1.17.2</version>
+        </dependency>
+
+        <!-- Apache POI — XLSX parsing for Data-Driven execution -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.2.5</version>
+        </dependency>
+
+        <!-- OpenCSV — CSV parsing for Data-Driven execution -->
+        <dependency>
+            <groupId>com.opencsv</groupId>
+            <artifactId>opencsv</artifactId>
+            <version>5.9</version>
+        </dependency>
+
+        <!-- Email (Execution Report delivery) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
+
+        <!-- openhtmltopdf — renders the Execution Report HTML into a real PDF
+             (server-side, from actual execution data) for email attachment -->
+        <dependency>
+            <groupId>io.github.openhtmltopdf</groupId>
+            <artifactId>openhtmltopdf-pdfbox</artifactId>
+            <version>1.1.73</version>
+        </dependency>
+
+        <!-- Jayway JsonPath — JSONPath evaluation for API Testing assertions
+             and response-value extraction (request chaining). No JSONPath
+             capability exists anywhere else in this codebase; hand-rolling
+             one would reinvent a mature, widely-used library. -->
+        <dependency>
+            <groupId>com.jayway.jsonpath</groupId>
+            <artifactId>json-path</artifactId>
+            <version>2.9.0</version>
         </dependency>
 
         <!-- Testing -->

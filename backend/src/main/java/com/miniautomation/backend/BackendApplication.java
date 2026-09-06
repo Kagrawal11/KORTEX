@@ -2,10 +2,10 @@ package com.miniautomation.backend;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.scheduling.annotation.EnableAsync;
 
+// @EnableAsync now lives on com.miniautomation.backend.config.AsyncConfig,
+// alongside the named "ddTaskExecutor" bean it enables.
 @SpringBootApplication
-@EnableAsync
 public class BackendApplication {
 
     public static void main(String[] args) {

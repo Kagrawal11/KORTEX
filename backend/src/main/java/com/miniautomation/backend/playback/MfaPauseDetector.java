@@ -103,6 +103,49 @@ public class MfaPauseDetector {
         return false;
     }
 
+    /** Waits until a manual MFA/OTP checkpoint is actually completed. */
+    public boolean waitForManualMfaCompletion(Page page, String urlAtPause) {
+        System.out.println("[MfaPauseDetector] Paused for manual MFA/OTP. Waiting up to 5 minutes...");
+        long deadline = System.currentTimeMillis() + MAX_WAIT_MS;
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(POLL_INTERVAL_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+
+            String currentUrl = safeGetUrl(page);
+            if (currentUrl != null && !currentUrl.equals(urlAtPause)
+                    && !"about:blank".equalsIgnoreCase(currentUrl)) {
+                stabilise(page);
+                System.out.println("[MfaPauseDetector] Page transitioned. Resuming playback.");
+                return true;
+            }
+
+            try {
+                Object value = page.evaluate("() => {" +
+                        "const text=((document.body&&document.body.innerText)||'').toLowerCase();" +
+                        "const s=['one time password','one-time password','otp','verification code'," +
+                        "'security code','authentication code','two factor','two-factor'," +
+                        "'multi factor','multi-factor','mfa','enter code','verify your identity'];" +
+                        "if(s.some(x=>text.includes(x))) return true;" +
+                        "return Array.from(document.querySelectorAll('input:not([type=\"hidden\"])')).some(i=>{" +
+                        "const a=[i.id,i.name,i.placeholder,i.getAttribute('aria-label'),i.getAttribute('autocomplete')]" +
+                        ".filter(Boolean).join(' ').toLowerCase();" +
+                        "return /(^|[^a-z])(otp|mfa|one.?time|verification|security.?code|auth.?code)([^a-z]|$)/.test(a)" +
+                        "||i.getAttribute('autocomplete')==='one-time-code';});" +
+                        "}");
+                if (Boolean.FALSE.equals(value)) {
+                    stabilise(page);
+                    System.out.println("[MfaPauseDetector] Manual MFA appears complete. Resuming.");
+                    return true;
+                }
+            } catch (Exception ignored) {}
+        }
+        return false;
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // Helpers
     // ──────────────────────────────────────────────────────────────────────────

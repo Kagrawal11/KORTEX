@@ -23,28 +23,35 @@ public class CrawlerService {
     }
 
     public PageInfo scan(String url) {
-        Page page = browserManager.getOrLaunchPage(url);
-        System.out.println("[STEP] Waiting for DOM stability (SPA load lock)...");
-        waitForDomStability(page);
+        // Pinned to BrowserManager's dedicated Playwright thread — the crawler
+        // shares the same singleton Page as recording/playback and must not
+        // touch it from an arbitrary HTTP request thread.
+        return browserManager.runOnPlaywrightThread(() -> {
+            Page page = browserManager.getOrLaunchPage(url);
+            System.out.println("[STEP] Waiting for DOM stability (SPA load lock)...");
+            waitForDomStability(page);
 
-        System.out.println("[STEP] Scanning page structure...");
-        String html = page.content();
-        PageInfo pageInfo = domAnalyzer.analyze(html);
-        pageInfo.setUrl(url);
-        return pageInfo;
+            System.out.println("[STEP] Scanning page structure...");
+            String html = page.content();
+            PageInfo pageInfo = domAnalyzer.analyze(html);
+            pageInfo.setUrl(url);
+            return pageInfo;
+        });
     }
 
     public LoginResult scanFillAndVerify(String url, Map<String, String> fieldValues, String expectedSuccessIndicator) {
-        Page page = browserManager.getOrLaunchPage(url);
-        System.out.println("[STEP] Waiting for DOM stability before fill & submit...");
-        waitForDomStability(page);
+        return browserManager.runOnPlaywrightThread(() -> {
+            Page page = browserManager.getOrLaunchPage(url);
+            System.out.println("[STEP] Waiting for DOM stability before fill & submit...");
+            waitForDomStability(page);
 
-        System.out.println("[STEP] Scanning page structure...");
-        String html = page.content();
-        PageInfo pageInfo = domAnalyzer.analyze(html);
-        pageInfo.setUrl(url);
+            System.out.println("[STEP] Scanning page structure...");
+            String html = page.content();
+            PageInfo pageInfo = domAnalyzer.analyze(html);
+            pageInfo.setUrl(url);
 
-        return formFiller.fillAndSubmit(page, pageInfo, fieldValues, expectedSuccessIndicator);
+            return formFiller.fillAndSubmit(page, pageInfo, fieldValues, expectedSuccessIndicator);
+        });
     }
 
     private void waitForDomStability(Page page) {
