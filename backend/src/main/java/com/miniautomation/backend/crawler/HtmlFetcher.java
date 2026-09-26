@@ -25,26 +25,13 @@ public class HtmlFetcher {
 
             String html = page.content();
 
-            System.out.println("=================================");
-            System.out.println("Current Working Directory:");
-            System.out.println(System.getProperty("user.dir"));
-            System.out.println("HTML Length: " + html.length());
-            System.out.println("=================================");
+            System.out.println("[HtmlFetcher] Fetched " + html.length() + " chars from " + url);
 
-            try {
+            // The page.html dump that used to live here was debug scaffolding:
+            // nothing ever read the file back, the HTML is returned to the
+            // caller anyway, and in a container it wrote an unbounded file into
+            // the image's working directory on every single fetch.
 
-                java.nio.file.Path path = java.nio.file.Paths.get("page.html");
-
-                java.nio.file.Files.writeString(path, html);
-
-                System.out.println("Saved HTML to:");
-                System.out.println(path.toAbsolutePath());
-
-            } catch (Exception e) {
-
-                e.printStackTrace();
-
-            }
             browser.close();
 
             return html;

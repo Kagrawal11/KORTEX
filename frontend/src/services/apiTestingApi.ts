@@ -4,7 +4,7 @@ import type {
   ApiRequestSpec, ApiAuthConfig, ApiRun, ExecuteRequestPayload, StartRunConfig,
 } from '../types';
 
-const BASE = 'http://localhost:8080/api/api-testing';
+const BASE = '/api/api-testing';
 
 export const apiTestingApi = {
   // ── Environments ───────────────────────────────────────────────────────

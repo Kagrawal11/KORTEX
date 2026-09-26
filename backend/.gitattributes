@@ -1,2 +1,5 @@
 /mvnw text eol=lf
 *.cmd text eol=crlf
+# entrypoint.sh runs as the container's ENTRYPOINT — CRLF here becomes
+# "exec format error" at runtime on anyone who clones with autocrlf=true.
+*.sh text eol=lf

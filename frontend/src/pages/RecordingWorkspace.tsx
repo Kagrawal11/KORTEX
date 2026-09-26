@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { uiAutomationApi, recordingScreenshotUrl } from '../services/uiAutomationApi';
+import { uiAutomationApi, RECORDING_VNC_URL } from '../services/uiAutomationApi';
 import type { TestScenario } from '../types';
 import { PlayCircle, Square, ArrowLeft, Radio, Globe2, Monitor, ListChecks, RefreshCw, Lock } from 'lucide-react';
 import { useToast } from '../components/Toast';
@@ -16,12 +16,12 @@ export default function RecordingWorkspace() {
   const [recordingTimer, setRecordingTimer] = useState(0);
   const { showToast } = useToast();
 
-  // Live preview — a real, periodically-refreshed screenshot of the actual
-  // Playwright browser window (polled, not a video stream), plus its real
-  // current URL. The browser itself still opens in its own separate window
-  // exactly as before; this is purely an additional read-only view of it,
-  // and never touches recording/playback control flow.
-  const [screenshotTick, setScreenshotTick] = useState(0);
+  // Live browser — an interactive noVNC view of the real Playwright Chromium
+  // running on the server's virtual display. Clicks and keystrokes made here
+  // are delivered as real X input, so Chromium raises genuinely trusted DOM
+  // events and RecordingSession's injected listeners capture them exactly as
+  // they would from a local browser window. Nothing in the recording control
+  // flow is touched by this component.
   const [previewLoaded, setPreviewLoaded] = useState(false);
   const [currentUrl, setCurrentUrl] = useState('');
 
@@ -52,16 +52,14 @@ export default function RecordingWorkspace() {
       setPreviewLoaded(false);
       return;
     }
-    const screenshotInterval = window.setInterval(() => setScreenshotTick(t => t + 1), 1500);
+    // Only the URL bar polls now. The browser view itself is a live VNC
+    // stream, so there is no screenshot poll to run.
     const statusInterval = window.setInterval(() => {
       uiAutomationApi.getRecordingStatus()
         .then(status => setCurrentUrl(status.currentUrl))
         .catch(() => { /* transient — keep showing the last known URL */ });
     }, 2000);
-    return () => {
-      clearInterval(screenshotInterval);
-      clearInterval(statusInterval);
-    };
+    return () => clearInterval(statusInterval);
   }, [isRecording]);
 
   const handleStartRecording = async () => {
@@ -72,7 +70,7 @@ export default function RecordingWorkspace() {
       setIsRecording(true);
       setPreviewLoaded(false);
       setCurrentUrl(test?.targetUrl ?? '');
-      showToast('Recording started — interact with the browser window.', 'success');
+      showToast('Recording started — interact with the browser below.', 'success');
     } catch (err: any) {
       // Show the actual server-side reason (e.g. "a playback is currently running")
       const serverMsg = err?.response?.data?.error || err?.response?.data?.message;
@@ -177,7 +175,7 @@ export default function RecordingWorkspace() {
         {/* Left/Main Area — live browser preview while recording */}
         <div className="flex-1" style={{ padding: '2rem', display: 'flex', flexDirection: 'column', alignItems: 'center', borderRight: '1px solid var(--border-color)', overflowY: 'auto' }}>
           {isRecording ? (
-            <div className="card" style={{ maxWidth: '760px', width: '100%', padding: 0, overflow: 'hidden' }}>
+            <div className="card" style={{ maxWidth: '1280px', width: '100%', padding: 0, overflow: 'hidden' }}>
               {/* Mock browser chrome — matches the popup window's real current URL */}
               <div className="flex items-center gap-2" style={{ padding: '0.6rem 0.85rem', background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border-color)' }}>
                 <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#EF4444' }} />
@@ -188,20 +186,25 @@ export default function RecordingWorkspace() {
                   <span className="truncate">{currentUrl || test.targetUrl}</span>
                 </div>
               </div>
-              <div style={{ position: 'relative', background: 'var(--bg-input)', minHeight: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <img
-                  key="recording-preview"
-                  src={recordingScreenshotUrl(screenshotTick)}
+              {/* The iframe stays mounted while loading rather than being
+                  display:none'd — noVNC measures its container on connect and
+                  a hidden element has no dimensions to measure. The spinner is
+                  an overlay on top of it instead. */}
+              <div style={{ position: 'relative', background: 'var(--bg-input)', aspectRatio: '1280 / 900' }}>
+                <iframe
+                  key="recording-vnc"
+                  src={RECORDING_VNC_URL}
                   onLoad={() => setPreviewLoaded(true)}
-                  onError={() => setPreviewLoaded(false)}
-                  alt="Live preview of the recording browser window"
-                  style={{ width: '100%', display: previewLoaded ? 'block' : 'none' }}
+                  title="Live browser session"
+                  style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
                 />
                 {!previewLoaded && (
-                  <div className="flex flex-col items-center text-muted" style={{ padding: '3rem 1rem', textAlign: 'center' }}>
+                  <div
+                    className="flex flex-col items-center justify-center text-muted"
+                    style={{ position: 'absolute', inset: 0, background: 'var(--bg-input)', textAlign: 'center', padding: '1rem' }}
+                  >
                     <RefreshCw size={22} className="animate-spin mb-3" />
-                    <p className="text-sm" style={{ margin: 0 }}>Waiting for the first preview frame…</p>
-                    <p className="text-xs mt-4" style={{ margin: 0 }}>Switch to the popup browser window to begin.</p>
+                    <p className="text-sm" style={{ margin: 0 }}>Connecting to the live browser…</p>
                   </div>
                 )}
               </div>
@@ -217,16 +220,15 @@ export default function RecordingWorkspace() {
           )}
 
           {isRecording && (
-            <div className="text-sm mt-4" style={{ maxWidth: '760px', width: '100%', color: 'var(--text-muted)' }}>
-              Interact with the popup browser window normally — every click and type is captured by the backend.
-              Return here and click "Stop &amp; Save" when finished. This preview refreshes automatically and is a
-              few seconds behind the real window.
+            <div className="text-sm mt-4" style={{ maxWidth: '1280px', width: '100%', color: 'var(--text-muted)' }}>
+              Click and type directly in the browser above — it is the real Chromium session, and every
+              interaction is captured by the backend. Click "Stop &amp; Save" when you are finished.
             </div>
           )}
 
           {/* Session info — static, known-true facts about this recording
               session (target URL, engine), not a live telemetry feed. */}
-          <div className="flex gap-4 mt-6 flex-wrap" style={{ maxWidth: '760px', width: '100%' }}>
+          <div className="flex gap-4 mt-6 flex-wrap" style={{ maxWidth: '1280px', width: '100%' }}>
             <div className="card" style={{ flex: '1 1 200px', padding: '0.9rem 1.1rem' }}>
               <div className="flex items-center gap-2 text-xs text-muted mb-1"><Globe2 size={14} /> Target Website</div>
               <div className="text-sm font-medium truncate">{test.targetUrl}</div>

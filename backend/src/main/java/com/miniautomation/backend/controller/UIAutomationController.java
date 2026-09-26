@@ -5,7 +5,6 @@ import com.miniautomation.backend.entity.TestRunEntity;
 import com.miniautomation.backend.entity.TestScenarioEntity;
 import com.miniautomation.backend.service.ScriptExportService;
 import com.miniautomation.backend.service.TestScenarioService;
-import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -97,24 +96,13 @@ public class UIAutomationController {
         return scenarioService.getTestRun(id);
     }
 
-    // --- Live recording preview ---
-    // Real, periodically-polled screenshots of the actual Playwright browser
-    // window (not a live video stream, not embedded/iframed — the real
-    // browser still opens in its own separate window exactly as before).
-    // Purely additive and read-only; touches no recording/playback control
-    // flow. Returns 204 (nothing to show) rather than an error whenever there
-    // is no live session, so the frontend can fail silently and keep polling.
-
-    @GetMapping(value = "/recording/screenshot", produces = MediaType.IMAGE_JPEG_VALUE)
-    public ResponseEntity<byte[]> getRecordingScreenshot() {
-        byte[] shot = browserManager.takeScreenshot();
-        if (shot == null) {
-            return ResponseEntity.noContent().build();
-        }
-        return ResponseEntity.ok()
-                .cacheControl(CacheControl.noStore())
-                .body(shot);
-    }
+    // --- Live recording session ---
+    // The browser itself is now viewed and DRIVEN through noVNC (served at
+    // /vnc/ by the same container), which replaced the old polled-JPEG
+    // preview: that poll pushed a full screenshot every 1.5s whether or not
+    // anything had changed, and was read-only, so it could never let anyone
+    // actually record on a deployed instance. This endpoint remains because
+    // the workspace still shows the browser's real current URL.
 
     @GetMapping("/recording/status")
     public Map<String, Object> getRecordingStatus() {

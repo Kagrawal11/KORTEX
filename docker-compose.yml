@@ -1,0 +1,52 @@
+# KORTEX production stack.
+#
+# Only Caddy publishes ports. The backend's 8080 (API) and 6080 (noVNC) and
+# x11vnc's 5900 stay on the internal compose network — they are reachable only
+# through nginx -> Caddy, which is the single authenticated entry point.
+#
+# Images are built by GitHub Actions and pulled from GHCR: the 1 GB deployment
+# target cannot run `mvn package` and `npm ci` without being OOM-killed, so
+# there is deliberately no `build:` stanza here. See DEPLOYMENT.md.
+#
+#   docker compose pull && docker compose up -d --no-build
+
+services:
+  backend:
+    image: ghcr.io/${GHCR_OWNER}/kortex-backend:latest
+    restart: unless-stopped
+    env_file: .env
+    # Chromium exhausts the 64MB default /dev/shm and crashes tabs. Raising it
+    # here is cheaper than passing --disable-dev-shm-usage, which would force
+    # Chromium to use disk instead.
+    shm_size: 512mb
+    expose:
+      - "8080"
+      - "6080"
+
+  frontend:
+    image: ghcr.io/${GHCR_OWNER}/kortex-frontend:latest
+    restart: unless-stopped
+    depends_on:
+      - backend
+    expose:
+      - "80"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - frontend
+
+volumes:
+  # Holds the Let's Encrypt account key and certificates. Losing this volume
+  # means re-issuing certs, which counts against rate limits — do not prune it.
+  caddy-data:
+  caddy-config:

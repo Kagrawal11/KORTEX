@@ -4,7 +4,7 @@ import type {
   AccessibilityDashboardSummary, AccessibilityScanTrend, ManualChecksMap
 } from '../types';
 
-const ACCESSIBILITY_API_BASE_URL = 'http://localhost:8080/api/accessibility';
+const ACCESSIBILITY_API_BASE_URL = '/api/accessibility';
 
 export const accessibilityApi = {
   /** Creates a scan config and immediately starts its first run (status=RUNNING). */

@@ -1,7 +1,7 @@
 import axios from 'axios';
 import type { EmailReportRequest, EmailReportResponse } from '../types';
 
-const REPORTS_API_BASE_URL = 'http://localhost:8080/api/reports';
+const REPORTS_API_BASE_URL = '/api/reports';
 
 /**
  * Shared by all three report pages (UI Automation, Data Driven,

@@ -130,7 +130,7 @@ export default function TestDetails() {
     try {
       setIsLoadingScript(true);
       setActiveTab('script');
-      const resp = await fetch(`http://localhost:8080/api/ui-automation/tests/${testId}/export`);
+      const resp = await fetch(`/api/ui-automation/tests/${testId}/export`);
       const text = await resp.text();
       setScriptContent(text);
     } catch {

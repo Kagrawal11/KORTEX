@@ -280,36 +280,6 @@ public class BrowserManager {
     }
 
     /**
-     * Captures a JPEG screenshot of the current live page — used by the
-     * Recording Workspace UI to show a periodically-refreshed real preview of
-     * the actual browser window (polled, not a live video stream). Returns
-     * null if there is no active session, the page is closed, or the
-     * screenshot call itself fails for any reason (e.g. mid-navigation) —
-     * callers treat null as "nothing to show right now", not an error.
-     *
-     * Routed through runOnPlaywrightThread like every other Page call here;
-     * safe to call concurrently with an in-progress recording (both funnel
-     * through the same single pinned thread and simply queue).
-     */
-    public byte[] takeScreenshot() {
-        return runOnPlaywrightThread(() -> {
-            try {
-                if (page == null || page.isClosed()) {
-                    return null;
-                }
-                return page.screenshot(new Page.ScreenshotOptions()
-                        .setType(com.microsoft.playwright.options.ScreenshotType.JPEG)
-                        .setQuality(65)
-                        .setTimeout(3000));
-            } catch (Exception e) {
-                // Expected occasionally (e.g. mid-navigation) — the poller just
-                // tries again in ~1.5s, so this isn't worth logging on every hit.
-                return null;
-            }
-        });
-    }
-
-    /**
      * Returns the current page URL safely.
      * Returns null if the session is not active or the page throws.
      */

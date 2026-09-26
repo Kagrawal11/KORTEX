@@ -30,8 +30,14 @@ public class AsyncConfig {
     @Bean(DD_TASK_EXECUTOR)
     public Executor ddTaskExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(2);
-        executor.setMaxPoolSize(4);
+        // Serialized deliberately. AccessibilityScanExecutor launches its OWN
+        // Chromium per scan, so a pool of 4 meant up to 4 extra browsers on top
+        // of BrowserManager's persistent one. On the 1 GB deployment target
+        // that is an out-of-memory kill, not a slowdown. Runs now queue instead
+        // of racing — same results, one at a time.
+        // ponytail: raise both to 2-4 if the host ever gets >= 4 GB RAM.
+        executor.setCorePoolSize(1);
+        executor.setMaxPoolSize(1);
         executor.setQueueCapacity(50);
         executor.setThreadNamePrefix("dd-async-");
         executor.initialize();

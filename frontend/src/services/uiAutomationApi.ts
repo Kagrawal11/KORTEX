@@ -5,18 +5,22 @@ import type {
   DashboardSummary, DashboardRuns
 } from '../types';
 
-export const API_BASE_URL = 'http://localhost:8080/api/ui-automation';
+export const API_BASE_URL = '/api/ui-automation';
 
 /**
- * Builds a cache-busted URL for the live recording-preview screenshot — an
- * <img src> can point straight at this; pass a changing value (e.g. a
- * timestamp) each poll to force a reload instead of showing a cached image.
- * Returns 204 (no body) server-side when there's no live session, which
- * renders as a broken image — callers should handle onError.
+ * noVNC client for the live browser session, served by the backend container
+ * (websockify -> x11vnc -> Xvfb :99) and reverse-proxied at /vnc/.
+ *
+ * This replaced the old polled-screenshot preview. That preview was read-only,
+ * so nobody could record on a deployed instance, and it re-sent a full JPEG
+ * every 1.5s whether the page had changed or not. VNC is delta-based: it sends
+ * nothing while the screen is static, and it carries real input back.
+ *
+ * quality/compression are the bandwidth levers — lower quality, higher
+ * compression if egress is constrained.
  */
-export function recordingScreenshotUrl(cacheBust: number): string {
-  return `${API_BASE_URL}/recording/screenshot?t=${cacheBust}`;
-}
+export const RECORDING_VNC_URL =
+  '/vnc/vnc.html?autoconnect=1&resize=scale&reconnect=1&quality=3&compression=9';
 
 // ── Normal Record & Play API ─────────────────────────────────────────────────
 

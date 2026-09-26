@@ -1,0 +1,31 @@
+# Single authenticated entry point for the whole stack.
+#
+# KORTEX ships no authentication of its own — every controller is annotated
+# @CrossOrigin(origins = "*") and there is no Spring Security on the classpath.
+# Exposed without this basic_auth gate, anyone could POST an arbitrary URL to
+# /api/accessibility/scans and use the deployment as a free browser-driving
+# proxy, billed to the host account. This gate is not optional.
+#
+# It also covers /vnc/, which is why x11vnc can safely run with -nopw: it binds
+# to localhost inside the backend container and is only ever reached through
+# here.
+#
+# Caddy obtains and renews the Let's Encrypt certificate automatically over
+# HTTP-01 on port 80, and upgrades websockets through reverse_proxy with no
+# extra configuration (noVNC depends on that).
+
+{$KORTEX_HOST} {
+	# Caddy < 2.8 spells this directive `basicauth` (one word).
+	basic_auth {
+		kortex {$KORTEX_BASIC_AUTH_HASH}
+	}
+
+	reverse_proxy frontend:80
+
+	encode gzip
+
+	log {
+		output stdout
+		format console
+	}
+}
