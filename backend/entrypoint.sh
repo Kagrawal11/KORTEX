@@ -48,9 +48,26 @@ openbox &
 # to the host.
 x11vnc -display :99 -forever -shared -localhost -nopw -rfbport 5900 -noxdamage -quiet &
 
+java -jar /app/app.jar &
+java_pid=$!
+
+# Platforms that auto-detect a single "primary" port from whichever the
+# container opens first (Render Web Services) would otherwise lock onto
+# 6080, since websockify binds almost instantly while the JVM takes seconds
+# — leaving the actual API on 8080 unreachable. Starting websockify only
+# after 8080 is already open means the JVM always wins that race. This has
+# no effect on docker-compose, which never auto-detects ports.
+for _ in $(seq 1 150); do
+    if (exec 3<>/dev/tcp/127.0.0.1/8080) 2>/dev/null; then
+        exec 3>&-
+        break
+    fi
+    sleep 0.5
+done
+
 websockify --web=/usr/share/novnc 0.0.0.0:6080 localhost:5900 &
 
-# ponytail: no process supervisor. If Xvfb or x11vnc dies mid-session the JVM
-# keeps running blind until the container is restarted. Add supervisord only
-# if that actually happens in practice.
-exec java -jar /app/app.jar
+# ponytail: no process supervisor. If Xvfb, x11vnc or websockify dies
+# mid-session the JVM keeps running blind until the container is restarted.
+# Add supervisord only if that actually happens in practice.
+wait "$java_pid"
