@@ -57,9 +57,21 @@ java_pid=$!
 # — leaving the actual API on 8080 unreachable. Starting websockify only
 # after 8080 is already open means the JVM always wins that race. This has
 # no effect on docker-compose, which never auto-detects ports.
+#
+# bash's /dev/tcp probe is unreliable in this image (it reported success
+# immediately, before Tomcat had bound anything) — python3 is already a
+# websockify dependency here, so use a real socket connect instead.
 for _ in $(seq 1 150); do
-    if (exec 3<>/dev/tcp/127.0.0.1/8080) 2>/dev/null; then
-        exec 3>&-
+    if python3 -c '
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(1)
+try:
+    s.connect(("127.0.0.1", 8080))
+except OSError:
+    sys.exit(1)
+s.close()
+'; then
         break
     fi
     sleep 0.5
