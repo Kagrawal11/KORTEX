@@ -77,6 +77,15 @@ s.close()
     sleep 0.5
 done
 
+# Render's own port-scanner runs on its own cadence, not the instant 8080
+# opens — a scan that happens to land in the gap between "8080 just opened"
+# and "websockify not started yet" still works, but one that lands right as
+# websockify starts up can catch both ports in the same cycle and pick
+# either. Giving 8080 a full scan interval alone on the field, rather than
+# starting websockify the instant the probe succeeds, is what actually wins
+# the race.
+sleep 20
+
 websockify --web=/usr/share/novnc 0.0.0.0:6080 localhost:5900 &
 
 # ponytail: no process supervisor. If Xvfb, x11vnc or websockify dies
