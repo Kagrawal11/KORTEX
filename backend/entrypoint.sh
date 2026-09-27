@@ -51,42 +51,17 @@ x11vnc -display :99 -forever -shared -localhost -nopw -rfbport 5900 -noxdamage -
 java -jar /app/app.jar &
 java_pid=$!
 
-# Platforms that auto-detect a single "primary" port from whichever the
-# container opens first (Render Web Services) would otherwise lock onto
-# 6080, since websockify binds almost instantly while the JVM takes seconds
-# — leaving the actual API on 8080 unreachable. Starting websockify only
-# after 8080 is already open means the JVM always wins that race. This has
-# no effect on docker-compose, which never auto-detects ports.
-#
-# bash's /dev/tcp probe is unreliable in this image (it reported success
-# immediately, before Tomcat had bound anything) — python3 is already a
-# websockify dependency here, so use a real socket connect instead.
-for _ in $(seq 1 150); do
-    if python3 -c '
-import socket, sys
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.settimeout(1)
-try:
-    s.connect(("127.0.0.1", 8080))
-except OSError:
-    sys.exit(1)
-s.close()
-'; then
-        break
-    fi
-    sleep 0.5
-done
-
-# Render's own port-scanner runs on its own cadence, not the instant 8080
-# opens — a scan that happens to land in the gap between "8080 just opened"
-# and "websockify not started yet" still works, but one that lands right as
-# websockify starts up can catch both ports in the same cycle and pick
-# either. Giving 8080 a full scan interval alone on the field, rather than
-# starting websockify the instant the probe succeeds, is what actually wins
-# the race.
-sleep 20
-
-websockify --web=/usr/share/novnc 0.0.0.0:6080 localhost:5900 &
+# Render Web Services auto-detect and permanently lock a single "primary"
+# port per service, and empirically it prefers 6080 over 8080 regardless of
+# which one opened first (delaying websockify by up to 20s made no
+# difference) — Render Web Services only route to one port at all, so
+# noVNC could never be reachable there either way. $RENDER is set by Render
+# on every service, so skip publishing the websocket there entirely rather
+# than fight a race that can't be won; docker-compose (which never sets
+# $RENDER and never auto-detects ports) is unaffected.
+if [ -z "$RENDER" ]; then
+    websockify --web=/usr/share/novnc 0.0.0.0:6080 localhost:5900 &
+fi
 
 # ponytail: no process supervisor. If Xvfb, x11vnc or websockify dies
 # mid-session the JVM keeps running blind until the container is restarted.
